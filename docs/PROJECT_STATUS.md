@@ -28,7 +28,12 @@
 ## M1 — completed features
 
 ### Infrastructure
-- [x] Repository at `C:\dev\minuteai` (outside OneDrive — avoids sync corruption of `.venv`/`.git`)
+- [x] Repository at `C:\Users\madhan\OneDrive\Desktop\adv sql`
+      (relocated 2026-09-12 at user request, after the `C:\dev` copy was
+      accidentally deleted and recovered from the Recycle Bin with git history
+      and `.env` intact; a snapshot remains at `C:\dev\minuteai-BACKUP-2026-09-12`)
+- [ ] NOTE: living inside OneDrive. If `pip install` ever fails with a file-lock
+      or permission error, pause OneDrive sync for the duration of the install.
 - [x] Python 3.12.10 virtual environment
 - [x] Dependencies declared in `pyproject.toml`, pinned in `requirements.lock.txt` (51 packages)
 - [x] `docker-compose.yml` — PostgreSQL 16.15 + pgvector 0.8.6, DynamoDB Local
