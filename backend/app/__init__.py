@@ -1,0 +1,1 @@
+"""MinuteAI backend application package."""

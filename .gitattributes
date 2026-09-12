@@ -1,0 +1,17 @@
+# Normalise line endings so files behave identically on Windows and inside
+# Linux containers. Without this, a CRLF shell script fails in Docker with
+# an unhelpful "\r: not found".
+* text=auto
+
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.py    text eol=lf
+Dockerfile text eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
+*.mp3 binary
+*.mp4 binary
+*.wav binary
