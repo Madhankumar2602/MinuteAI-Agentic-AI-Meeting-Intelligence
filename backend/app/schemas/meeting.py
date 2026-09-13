@@ -8,6 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db.models.meeting import MeetingSourceType, MeetingStatus
+from app.schemas.common import PartialUpdate
 
 
 class MeetingCreateRequest(BaseModel):
@@ -25,13 +26,15 @@ class MeetingCreateRequest(BaseModel):
         return stripped
 
 
-class MeetingUpdateRequest(BaseModel):
+class MeetingUpdateRequest(PartialUpdate):
     """Partial update - every field optional.
 
     Distinguishing "field absent" from "field set to null" is done with
     ``model_dump(exclude_unset=True)`` in the route, so PATCH with an empty
     body is a no-op rather than wiping the record.
     """
+
+    NON_NULLABLE = frozenset({"title", "meeting_date", "source_type"})
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
     meeting_date: datetime | None = None

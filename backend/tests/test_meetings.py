@@ -243,3 +243,20 @@ async def test_delete_meeting(
     assert (
         await client.get(f"/api/v1/meetings/{created['id']}", headers=headers)
     ).status_code == 404
+
+
+async def test_patch_rejects_explicit_null_for_required_fields(
+    client: AsyncClient, make_user, auth_headers, meeting_payload
+) -> None:
+    """Regression: {"title": null} used to reach the database and return 500."""
+    user = await make_user()
+    headers = await auth_headers(user)
+    created = (
+        await client.post("/api/v1/meetings", json=meeting_payload(), headers=headers)
+    ).json()
+
+    response = await client.patch(
+        f"/api/v1/meetings/{created['id']}", json={"title": None}, headers=headers
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
