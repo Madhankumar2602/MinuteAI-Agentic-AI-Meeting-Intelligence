@@ -49,3 +49,6 @@ logs/
 Thumbs.db
 desktop.ini
 ehthumbs.db
+
+# ---- Generated test media (scripts/generate_sample_audio.ps1) ----
+backend/tests/fixtures/audio/*.wav

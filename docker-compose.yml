@@ -62,8 +62,32 @@ services:
       - dynamodb_data:/home/dynamodblocal/data
     working_dir: /home/dynamodblocal
 
+  object-storage:
+    # S3-compatible object storage for local development (ADR 0009). The app
+    # talks to it with the same boto3 S3 client it will use against real
+    # Amazon S3 in M10 - only S3_ENDPOINT_URL changes.
+    #
+    # RustFS rather than MinIO: the minio/minio image was withdrawn from Docker
+    # Hub in 2025 and the remaining mirror stopped receiving updates. RustFS was
+    # chosen after a 12-point compatibility probe (presigned POST policy
+    # enforcement, CORS, ranged GET, prefix delete) passed in full.
+    # Pinned to an exact version: it is a release candidate, used for dev only.
+    image: rustfs/rustfs:1.0.0-rc.6
+    container_name: minuteai_object_storage
+    restart: unless-stopped
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY}
+    ports:
+      - "9000:9000"
+    volumes:
+      - object_storage_data:/data
+
 volumes:
   postgres_data:
     name: minuteai_postgres_data
   dynamodb_data:
     name: minuteai_dynamodb_data
+  object_storage_data:
+    name: minuteai_object_storage_data
