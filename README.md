@@ -7,7 +7,7 @@ Turns meeting audio, video, or transcripts into structured, queryable, and
 actionable knowledge: summaries, decisions, action items, cross-meeting
 semantic Q&A, and proactive follow-up detection.
 
-> **Status: M3 — Async processing + DynamoDB ✅ complete.** 111 tests passing (+2 opt-in live tests).
+> **Status: M4 — Recordings + S3 + transcription ✅ complete.** 159 tests passing (+3 opt-in live tests).
 > See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
 
 ---
@@ -20,7 +20,7 @@ semantic Q&A, and proactive follow-up detection.
 | Relational store | PostgreSQL 16 | Source of truth for all business data |
 | Vector search | pgvector (inside PostgreSQL) | Keeps ACL filtering and vectors in one transactional store — [ADR 0002](docs/adr/0002-pgvector-over-dedicated-vector-db.md) |
 | Workflow state | DynamoDB | Processing-job queue with leases, retries, and TTL — [ADR 0008](docs/adr/0008-dynamodb-job-queue-with-leased-workers.md) |
-| Object storage | Amazon S3 *(M4)* | Audio, video, transcripts, exports |
+| Object storage | Amazon S3 (RustFS locally) | Recordings and raw transcripts; direct browser upload — [ADR 0009](docs/adr/0009-recording-upload-and-transcription.md) |
 | LLM + transcription | Google Gemini *(M2)* | One provider behind a swappable interface — [ADR 0006](docs/adr/0006-gemini-as-initial-llm-provider.md) |
 | Auth | JWT + Argon2id | [ADR 0005](docs/adr/0005-argon2-over-bcrypt.md) |
 
@@ -36,7 +36,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 | **Docker Desktop** | Must be running before `docker compose up` |
 | **Git** | |
 
-Ports **5432**, **8001**, and **8010** must be free.
+Ports **5432**, **8001**, **8010**, and **9000** must be free.
 
 > **Windows note:** if Anaconda is installed, `python` on your PATH is probably
 > Anaconda's. Always create the venv with `py -3.12`, never `python -m venv`.
@@ -127,6 +127,7 @@ Expected — note `pgvector=yes` and the Gemini model:
 {"status":"ok","checks":{
   "postgres":{"healthy":true,"detail":"reachable (pgvector=yes)"},
   "dynamodb":{"healthy":true,"detail":"reachable (jobs table ACTIVE)"},
+  "s3":{"healthy":true,"detail":"reachable (bucket minuteai-dev-media)"},
   "gemini":{"healthy":true,"detail":"reachable (model=gemini-3.6-flash)"},
   "worker":{"healthy":true,"detail":"polling (active=0, completed=0, failed=0, retried=0)"}}}
 ```
@@ -137,7 +138,7 @@ Run the test suite (from `backend/`):
 pytest
 ```
 
-Expected: `111 passed, 2 skipped`. The two skipped tests call the real Gemini
+Expected: `159 passed, 2 skipped`. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
 API and are opt-in:
 
 ```bash
@@ -198,6 +199,25 @@ Then read the results from `GET /api/v1/meetings/MEETING_ID/intelligence`.
 Submitting again on an unchanged transcript returns **200** with
 `"cached": true` and queues nothing.
 
+### Uploading a recording
+
+Recordings upload straight from the client to storage. Three calls:
+
+```bash
+curl -X POST http://localhost:8010/api/v1/meetings/MEETING_ID/media/upload-url -H "Authorization: Bearer PASTE_TOKEN" -H "Content-Type: application/json" -d '{"filename":"standup.wav","content_type":"audio/wav","size_bytes":4937822}'
+```
+
+POST the file to the returned `upload_url` as multipart form data, sending
+every entry of `fields` first and the file last under the name `file`. Then
+confirm, which queues transcription and extraction:
+
+```bash
+curl -X POST http://localhost:8010/api/v1/meetings/MEETING_ID/media/complete -H "Authorization: Bearer PASTE_TOKEN" -H "Content-Type: application/json" -d '{"upload_token":"PASTE_UPLOAD_TOKEN"}'
+```
+
+To create a sample recording (Windows), run
+`powershell -ExecutionPolicy Bypass -File scripts\generate_sample_audio.ps1`.
+
 ### Running the worker separately
 
 By default the worker runs inside the API process. To run it as its own process
@@ -228,6 +248,10 @@ python -m app.workers.processing
 | POST | `/api/v1/meetings/{id}/process` | ✔ | Queue AI extraction → 202 + job (`?force=true` to re-run) |
 | GET | `/api/v1/jobs/{job_id}` | ✔ | Poll a processing job |
 | GET | `/api/v1/meetings/{id}/jobs` | ✔ | Processing history for a meeting |
+| POST | `/api/v1/meetings/{id}/media/upload-url` | ✔ | Presigned direct upload for a recording |
+| POST | `/api/v1/meetings/{id}/media/complete` | ✔ | Verify upload, queue transcription + processing |
+| GET | `/api/v1/meetings/{id}/media` | ✔ | Recording metadata + playback URL |
+| DELETE | `/api/v1/meetings/{id}/media` | ✔ | Delete the recording (transcript kept) |
 | GET | `/api/v1/meetings/{id}/intelligence` | ✔ | Summary, participants, decisions, action items |
 | GET | `/api/v1/meetings/{id}/summary` | ✔ | Summary with provenance and `is_stale` |
 | GET | `/api/v1/meetings/{id}/decisions` | ✔ | Decisions |
@@ -289,6 +313,9 @@ minuteai/
 | `MissingGreenlet` | Lazy-loaded a relationship | Load it explicitly with `selectinload()` — [ADR 0003](docs/adr/0003-async-sqlalchemy.md) |
 | `/process` returns 503 `llm_not_configured` | `GEMINI_API_KEY` empty or invalid | Set it in `.env`, restart the API |
 | Job ends `FAILED` with `llm_rate_limited` | Gemini quota still exhausted after 3 attempts | Wait, then submit again; unchanged transcripts are served from cache |
+| Upload POST to storage returns 400 | File exceeds `MEDIA_MAX_BYTES`, or type/key differs from the issued policy | Request a new upload URL matching the file |
+| `complete` returns 422 `media_invalid` | File contents are not the declared audio/video format | Upload a genuine recording |
+| `complete` returns 409 `manual_transcript_exists` | A typed transcript takes precedence | Resend with `replace_manual_transcript: true` |
 | Job stays `QUEUED` forever | No worker running (`WORKER_EMBEDDED=false` without a standalone worker) | Start `python -m app.workers.processing`, or check `worker` in `/health/deps` |
 | `/process` returns 409 `processing_in_progress` on transcript edit | A job is queued or running | Wait for the job to finish |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
@@ -300,7 +327,7 @@ minuteai/
 - **M1** ✅ Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD
 - **M2** ✅ Meeting intelligence — Gemini extraction of summary, decisions, action items, with evidence verification
 - **M3** ✅ Async processing — DynamoDB job queue, leased workers, retries, crash recovery
-- M4 Audio upload + S3 + transcription
+- **M4** ✅ Recordings — direct S3 upload, signature validation, Gemini transcription
 - M5 React UI
 - M6 Embeddings + pgvector
 - M7 Cross-meeting RAG

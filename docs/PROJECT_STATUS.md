@@ -1,8 +1,8 @@
 # MinuteAI — Project Status
 
 **Last updated:** 2026-09-13
-**Current milestone:** M3 — Async processing + DynamoDB ✅ **COMPLETE**
-**Next milestone:** M4 — Audio + S3 + transcription (needs an AWS account for S3; see below)
+**Current milestone:** M4 — Recordings + S3 + transcription ✅ **COMPLETE**
+**In progress:** M5 — React frontend
 
 ---
 
@@ -12,16 +12,45 @@
 |---|---|---|
 | M1 | Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD | ✅ `v0.1.0` |
 | M2 | Text-first AI intelligence — summary, decisions, action items | ✅ `v0.2.0` |
-| **M3** | Async processing + DynamoDB job state | ✅ `v0.3.0` |
-| M4 | Audio upload + S3 + transcription | 🔴 Needs AWS account for S3 |
-| M5 | React frontend | ⬜ Not started — needs no credentials |
-| M6 | Embeddings + pgvector | ⬜ Not started — needs no credentials |
+| M3 | Async processing + DynamoDB job state | ✅ `v0.3.0` |
+| **M4** | Recordings + S3 + transcription | ✅ `v0.4.0` (S3 local; real AWS S3 in M10) |
+| M5 | React frontend | 🔄 In progress |
+| M6 | Embeddings + pgvector | ⬜ Not started |
 | M7 | Cross-meeting RAG | ⬜ Not started |
 | M8 | Agent automation | ⬜ Not started |
 | M9 | Agent UI + human approval | ⬜ Not started |
 | M10 | AWS deployment | 🔴 Needs AWS account |
 | M11 | Lambda + EventBridge | 🔴 Needs AWS account |
 | M12 | Testing + evaluation + finalisation | ⬜ Not started |
+
+---
+
+## M4 — completed features (ADR 0009)
+
+- [x] S3-compatible storage locally (RustFS, pinned) after MinIO was withdrawn and LocalStack began requiring a licence token; 12-point compatibility probe
+- [x] Presigned **POST** uploads: storage itself enforces key, content type, and size (verified by sending violating uploads)
+- [x] Typed, short-lived upload tokens bound to user + meeting; no DB row until an upload is verified
+- [x] File-signature sniffing for WAV, MP3, AAC, OGG, FLAC, WebM, MP4/M4A, MOV; disguised files deleted (mutation-checked)
+- [x] Filenames sanitised and never used in keys or paths
+- [x] `meeting_media` table; transcript provenance (media id, etag, raw S3 key, model, duration) — migration `0004`
+- [x] Transcription stage inside the existing job: events, retries, leases, and fencing all apply
+- [x] Etag rule: typed transcript wins; same recording never transcribed twice; replaced recording re-transcribed
+- [x] Gemini Files API transcription (`gemini-3.6-flash`); remote copy deleted after every call
+- [x] Raw structured transcription archived to S3; exact WAV duration from the header (model timestamps unreliable)
+- [x] Recording playback via short-lived presigned GET; recording delete keeps the transcript
+- [x] Meeting deletion removes its S3 objects; `/health/deps` checks the bucket
+- [x] Synthetic meeting audio generated independently with Windows TTS (`scripts/generate_sample_audio.ps1`)
+
+**Verified live:** 4.9 MB upload in 0.72 s direct to storage; transcription 23–31 s (WER 2.7%);
+upload-to-results 47 s; extraction on transcribed text fully correct; playback URL works.
+
+**Found while building M4:**
+- `minio/minio` no longer exists on Docker Hub; `localstack/localstack` exits without a licence token
+- Git Bash rewrites `/data` to `C:/Program Files/Git/data` in `docker run` arguments (use Compose, or `MSYS_NO_PATHCONV=1`)
+- `gemini-3.5-transcribe` does not support JSON output
+- Transcription misattributed two speaker turns; timestamps ran past the recording's end; "Meera" was once spelled "Mira"
+
+**Tests:** 159 passed; 3 opt-in live tests (health, extraction, transcription) pass.
 
 ---
 

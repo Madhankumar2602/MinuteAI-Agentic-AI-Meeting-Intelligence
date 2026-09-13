@@ -1,7 +1,7 @@
 # MinuteAI — Architecture
 
 > Living document. Updated as each milestone lands.
-> Current state: **M3 complete**. Sections marked *(planned)* are not built yet.
+> Current state: **M4 complete**. Sections marked *(planned)* are not built yet.
 
 ## 1. System overview
 
@@ -12,12 +12,13 @@
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │ HTTPS + JWT Bearer          (POST /process → 202, poll job)
 ┌───────────────▼──────────────────────────────────────────────────────────┐
-│  FastAPI process                                  [M1–M3: BUILT]         │
+│  FastAPI process                                  [M1–M4: BUILT]         │
 │                                                                          │
 │  middleware  RequestIDMiddleware · CORS                                  │
-│  api/v1      auth · meetings · intelligence · action-items · jobs        │
+│  api/v1      auth · meetings · intelligence · action-items · jobs · media│
 │  services    authorization · intelligence · grounding · prompts          │
-│              job_store · dynamo · llm/ (base · gemini · factory)         │
+│              job_store · dynamo · storage · media_validation ·           │
+│              transcription · llm/ (base · gemini · factory)             │
 │  workers     ProcessingWorker — embedded by default, or standalone:      │
 │              python -m app.workers.processing                            │
 └───┬──────────────────────────┬───────────────────────────────┬───────────┘
@@ -29,10 +30,12 @@
 │ users, meetings,      │  │   job items  (TTL 30 days)   │  └──────────────┘
 │ transcripts,          │  │   meeting lock items         │
 │ summaries, decisions, │  │   gsi_meeting · gsi_status   │  ┌──────────────┐
-│ action_items,         │  │ (+ agent runs — planned M8)  │  │ S3 (planned, │
-│ meeting_participants  │  └──────────────────────────────┘  │ M4)          │
-│ (+ chunks — planned)  │                                    └──────────────┘
-└───────────────────────┘
+│ action_items,         │  │ (+ agent runs — planned M8)  │  │ S3 (RustFS   │
+│ meeting_participants, │  └──────────────────────────────┘  │ locally)     │
+│ meeting_media         │                                    │ recordings,  │
+│ (+ chunks — planned)  │   browser ──presigned POST────────►│ raw          │
+└───────────────────────┘                                    │ transcripts  │
+                                                             └──────────────┘
          EventBridge → Lambda → Agent   (planned, M11)
 ```
 
@@ -52,7 +55,10 @@
 | `app/services/intelligence.py` | Extraction pipeline: cache check, LLM call, normalisation, atomic persistence | Queueing, retries, HTTP |
 | `app/services/grounding.py` | Verify evidence quotes exist in the transcript | Decide what to keep |
 | `app/services/job_store.py` | DynamoDB job queue: submit with lock, claim, lease, requeue, finish, recover | Business data |
-| `app/workers/processing.py` | Run jobs: claim → heartbeat → pipeline → classify failure → transition | HTTP |
+| `app/services/storage.py` | S3: presigned POST with policy, head, ranged read, download, prefix delete | Decide what is valid |
+| `app/services/media_validation.py` | MIME allow-list, file-signature sniffing, filename sanitising | I/O |
+| `app/services/transcription.py` | When to transcribe (etag rule); download → transcribe → archive raw → store transcript | Queueing |
+| `app/workers/processing.py` | Run jobs: claim → heartbeat → [transcribe] → extract → classify failure → transition | HTTP |
 | `app/api/v1/` | HTTP contract, status codes, Pydantic validation | Direct SQL against a meeting by id |
 
 ## 3. Request lifecycle
@@ -121,7 +127,38 @@ internals, stays in the logs.
 - Three jobs submitted together ran at most two at a time
   (`WORKER_CONCURRENCY=2`).
 
-## 5. Extraction pipeline (M2 — ADR 0007)
+## 5. Recordings (M4 — ADR 0009)
+
+```
+POST /meetings/{id}/media/upload-url   {filename, content_type, size_bytes}
+  │  authorize (WRITE) · allow-listed type · size ≤ MEDIA_MAX_BYTES
+  │  key = users/{user}/meetings/{meeting}/source/{uuid}.{ext}     (never the filename)
+  └► {upload_url, fields (POST policy: key · Content-Type · content-length-range), upload_token}
+
+browser ── multipart POST ──► S3        storage rejects wrong key / type / size (400)
+
+POST /meetings/{id}/media/complete     {upload_token, replace_manual_transcript?}
+  │  token: type=media_upload, same user + meeting, not expired
+  │  typed transcript exists and not replacing → 409 manual_transcript_exists
+  │  HEAD object (size, type from storage) · ranged GET 64 bytes → signature must match
+  │     mismatch → DELETE object → 422 media_invalid
+  │  upsert meeting_media (old object deleted after commit) · meeting.source_type = audio|video
+  └► 202 {media, job}   (processing auto-queued)
+
+Worker, before extraction:
+  media_needing_transcription()  — typed transcript wins; same etag = cached
+  download to private temp dir → Gemini Files API → validated segments
+  → "Speaker: words" text → raw JSON archived to S3 → transcript row (source=transcription)
+  → job events transcription_started / transcription_completed → extraction (§6)
+```
+
+**Measured live** (154 s recording, 4.9 MB): upload 0.72 s direct to storage;
+transcription 23–31 s; upload-to-results 47 s. Extraction on the transcribed
+text was fully correct. Known weaknesses of the transcription itself (see
+ADR 0009): two speaker turns misattributed, model timestamps unreliable, name
+spelling varies between runs.
+
+## 6. Extraction pipeline (M2 — ADR 0007)
 
 ```
 run_extraction(meeting_id)
@@ -146,7 +183,7 @@ untrusted, output is schema-constrained, and nothing the model returns is
 executed. The fixture's injection line was verified not to become an action
 item.
 
-## 6. Data model
+## 7. Data model
 
 ```
 users 1──N meetings 1──1 transcripts
@@ -161,7 +198,8 @@ users 1──N meetings 1──1 transcripts
 |---|---|---|
 | `users` | email (unique), password_hash, is_active | |
 | `meetings` | owner_id → users (CASCADE), meeting_date, source_type, status | status: created / **queued** / processing / completed / failed |
-| `transcripts` | meeting_id (unique), content, content_sha256, counts, source | One per meeting, replaced in place |
+| `transcripts` | meeting_id (unique), content, content_sha256, counts, source, media_id, media_etag, raw_s3_key, transcription_model, duration_seconds | One per meeting; provenance set only when transcribed |
+| `meeting_media` | meeting_id (unique), s3_key, content_type, size_bytes, etag, original_filename | Row exists only for verified uploads |
 | `summaries` | meeting_id (unique), summary_text, key_points (JSONB), provenance | |
 | `meeting_participants` | meeting_id, display_name, name_key, user_id (SET NULL) | UNIQUE (meeting_id, name_key) |
 | `decisions` | meeting_id, position, decision_text, evidence_*, status | open / resolved / superseded |
@@ -188,7 +226,7 @@ round-trip cleanly), original wording kept beside resolved values (`owner_name`,
 **Planned:** `meeting_chunks` with `embedding vector(384)` (M6); `agent_alerts`,
 `agent_followups` (M8); `meeting_shares` (ADR 0004).
 
-## 7. Authentication and authorization
+## 8. Authentication and authorization
 
 **Authentication.** OAuth2 password flow → JWT (HS256, 60 min), re-checked
 against the database on every request.
@@ -198,7 +236,8 @@ point:
 
 | Resource | Mechanism |
 |---|---|
-| Meeting and everything under `/meetings/{id}/…` (incl. `/jobs`) | `authorize_meeting_access` |
+| Meeting and everything under `/meetings/{id}/…` (incl. `/jobs`, `/media`) | `authorize_meeting_access` |
+| Upload confirmation | signed upload token must name the same user and meeting, then `authorize_meeting_access` |
 | Action item / decision by id | load → delegate to the meeting check |
 | Job by id (`/jobs/{id}`) | load from DynamoDB → delegate to the meeting check |
 | Cross-meeting lists | `JOIN meetings WHERE owner_id = :me` in the query |
@@ -208,7 +247,7 @@ Every "not permitted" answer is **404**, identical to "does not exist". An
 intruder's `POST /process` is rejected before a job is created, so it never
 reaches the LLM (tested).
 
-## 8. Security measures in place
+## 9. Security measures in place
 
 | Measure | Where |
 |---|---|
@@ -222,13 +261,19 @@ reaches the LLM (tested).
 | Database CHECK constraints on every enum column | migration `0003` |
 | Job errors expose only safe `AppError` messages | `workers/processing.py` |
 | Duplicate submissions cannot trigger duplicate LLM spend | `services/job_store.py` |
+| Uploads bypass the API; storage enforces key, type, and size via POST policy | `services/storage.py` |
+| File-signature sniffing; disguised files deleted | `services/media_validation.py`, `api/v1/media.py` |
+| Upload tokens typed and bound to user + meeting | `core/security.py` |
+| User filenames never used in keys or paths | `services/storage.py` |
+| Recording deleted from the provider after each transcription | `services/llm/gemini.py` |
+| Meeting deletion removes its S3 objects | `api/v1/meetings.py` |
 | Prompt-injection defences | `services/prompts.py` |
 | API docs disabled in production | `main.py` |
 
 **Known gaps, deliberately deferred:** no rate limiting on login or `/process`;
 no refresh tokens; no password reset.
 
-## 9. Configuration
+## 10. Configuration
 
 One `.env` at the repository root serves Docker Compose and the backend, typed
 and validated at start-up.
@@ -237,22 +282,26 @@ and validated at start-up.
 |---|---|
 | LLM | `GEMINI_API_KEY`, `GEMINI_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `TRANSCRIPT_MAX_CHARS` |
 | Jobs | `DYNAMODB_JOBS_TABLE`, `DYNAMODB_AUTO_CREATE_TABLES` (false in AWS) |
+| Storage | `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_PUBLIC_ENDPOINT_URL`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_AUTO_CREATE_BUCKET`, `MEDIA_MAX_BYTES`, `MEDIA_UPLOAD_URL_TTL_SECONDS`, `GEMINI_TRANSCRIPTION_MODEL` |
 | Worker | `WORKER_EMBEDDED`, `WORKER_CONCURRENCY`, `WORKER_POLL_SECONDS`, `JOB_LEASE_SECONDS`, `JOB_MAX_ATTEMPTS`, `JOB_RETRY_BASE_SECONDS`, `JOB_TTL_DAYS` |
 
-## 10. Local port allocation
+## 11. Local port allocation
 
 | Port | Service |
 |---|---|
 | 5432 | PostgreSQL 16 + pgvector |
 | 8001 | DynamoDB Local (container port 8000) |
+| 9000 | S3-compatible object storage (RustFS) |
 | 8010 | FastAPI (8000 is occupied by an unrelated local project) |
 
-## 11. Testing strategy
+## 12. Testing strategy
 
 | Layer | How | Files |
 |---|---|---|
 | Pure logic | No DB, network, or LLM | `test_normalisation.py`, `test_logging_hygiene.py` |
 | LLM provider | SDK stubbed; retry and error mapping | `test_gemini_provider.py` |
+| Object storage | **Real local S3 server**: presigned POST policies probed by sending violating uploads; per-session test bucket | `test_media.py` |
+| Upload validation | Signature sniffing for 9 containers, disguised files, filename sanitising; mutation-checked | `test_media_validation.py` |
 | Job store | **Real DynamoDB Local**: transactions, conditional writes, GSIs; injected clock for leases and back-off | `test_job_store.py` |
 | API + worker + DB | Real routes, test PostgreSQL, test DynamoDB table; `FakeLLMProvider`; worker driven explicitly | `test_jobs.py`, `test_processing.py`, `test_action_items.py`, `test_auth.py`, `test_meetings.py`, `test_health.py` |
 | Database integrity | Raw SQL bypassing the app | `test_schema_constraints.py` |
@@ -269,7 +318,7 @@ and validated at start-up.
   production only. Tests now run app loggers at DEBUG, and a static test rejects
   reserved keys in any `extra=`.
 
-## 12. Architecture decision records
+## 13. Architecture decision records
 
 | ADR | Decision |
 |---|---|
@@ -281,5 +330,6 @@ and validated at start-up.
 | [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM provider |
 | [0007](adr/0007-structured-extraction-with-deterministic-validation.md) | Structured LLM extraction with deterministic post-processing |
 | [0008](adr/0008-dynamodb-job-queue-with-leased-workers.md) | Background processing on a DynamoDB job queue with leased workers |
+| [0009](adr/0009-recording-upload-and-transcription.md) | Presigned-POST uploads, signature validation, RustFS locally, Gemini transcription stage |
 
 Milestone status: [PROJECT_STATUS.md](PROJECT_STATUS.md).
