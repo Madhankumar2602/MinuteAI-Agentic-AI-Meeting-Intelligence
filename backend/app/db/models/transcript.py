@@ -46,6 +46,7 @@ class Transcript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="transcript_source",
             values_callable=lambda e: [m.value for m in e],
             native_enum=False,
+            create_constraint=True,
             length=16,
         ),
         default=TranscriptSource.MANUAL,

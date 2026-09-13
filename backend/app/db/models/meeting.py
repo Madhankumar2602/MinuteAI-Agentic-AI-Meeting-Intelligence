@@ -27,21 +27,27 @@ class MeetingSourceType(enum.StrEnum):
 class MeetingStatus(enum.StrEnum):
     """Lifecycle of the AI processing pipeline."""
 
-    CREATED = "created"  # exists, no transcript yet
-    PROCESSING = "processing"  # pipeline running        (M3)
-    COMPLETED = "completed"  # summary/decisions ready (M2)
-    FAILED = "failed"  # pipeline error          (M3)
+    CREATED = "created"  # exists, not yet processed
+    QUEUED = "queued"  # processing job waiting for a worker (M3)
+    PROCESSING = "processing"  # a worker is running the pipeline
+    COMPLETED = "completed"  # summary/decisions ready
+    FAILED = "failed"  # processing failed permanently (see the job for why)
 
 
 # native_enum=False renders these as VARCHAR + CHECK rather than a PostgreSQL
 # ENUM type. PostgreSQL ENUMs cannot gain a value inside a transaction block,
 # which makes every future status addition an awkward migration; a CHECK
 # constraint is simply dropped and recreated.
+#
+# create_constraint=True is REQUIRED: since SQLAlchemy 2.0 the CHECK is not
+# emitted by default, and without it the database accepts any string. That was
+# the actual state of migrations 0001-0002 until 0003 added the constraints.
 _SOURCE_TYPE = Enum(
     MeetingSourceType,
     name="meeting_source_type",
     values_callable=lambda e: [m.value for m in e],
     native_enum=False,
+    create_constraint=True,
     length=16,
 )
 _STATUS = Enum(
@@ -49,6 +55,7 @@ _STATUS = Enum(
     name="meeting_status",
     values_callable=lambda e: [m.value for m in e],
     native_enum=False,
+    create_constraint=True,
     length=16,
 )
 

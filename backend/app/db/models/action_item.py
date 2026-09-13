@@ -36,6 +36,7 @@ def _enum(cls: type[enum.StrEnum], name: str) -> Enum:
         name=name,
         values_callable=lambda e: [m.value for m in e],
         native_enum=False,
+        create_constraint=True,
         length=16,
     )
 
