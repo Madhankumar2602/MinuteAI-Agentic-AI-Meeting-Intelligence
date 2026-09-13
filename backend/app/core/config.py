@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # config.py -> core -> app -> backend -> <repo root>
@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(min_length=32)
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+
+    # ---- LLM provider (ADR 0006) ------------------------------------------
+    # SecretStr keeps the key out of repr() and tracebacks; read it only with
+    # .get_secret_value() at the single point where the client is built.
+    gemini_api_key: SecretStr = SecretStr("")
+    gemini_model: str = "gemini-3.6-flash"
+    llm_timeout_seconds: float = Field(default=120, gt=0)
+    llm_max_retries: int = Field(default=3, ge=0, le=6)
+
+    # Upper bound on accepted transcript size. Protects the database, the LLM
+    # quota, and the request body parser from a single oversized upload.
+    transcript_max_chars: int = Field(default=400_000, ge=1_000)
 
     # ---- Derived values ---------------------------------------------------
     @computed_field  # type: ignore[prop-decorator]

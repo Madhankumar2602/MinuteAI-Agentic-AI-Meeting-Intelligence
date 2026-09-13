@@ -30,6 +30,9 @@ dependencies = [
     "pyjwt>=2.9",
     "argon2-cffi>=23.1",           # OWASP-recommended password hashing
 
+    # --- AI provider (M2) ---
+    "google-genai>=2.20",          # official Gemini SDK, see ADR 0006
+
     # --- AWS (M1: DynamoDB Local health check only) ---
     "boto3>=1.34",
 ]
@@ -55,6 +58,9 @@ asyncio_mode = "auto"
 # pytest-asyncio >=1.0 requires this to be set explicitly.
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-q --strict-markers"
+markers = [
+    "live: calls a real external API; skipped unless RUN_LIVE_LLM_TESTS=1",
+]
 
 # ---------------------------------------------------------------------------
 # ruff  (lint + format)

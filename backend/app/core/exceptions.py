@@ -36,9 +36,15 @@ class AppError(Exception):
     code: str = "internal_error"
     message: str = "An unexpected error occurred."
 
-    def __init__(self, message: str | None = None, details: Any = None) -> None:
+    def __init__(
+        self, message: str | None = None, details: Any = None, code: str | None = None
+    ) -> None:
         self.message = message or self.message
         self.details = details
+        # Instance-level override lets one error class carry a more specific
+        # machine-readable code, e.g. ConflictError(code="transcript_missing").
+        if code is not None:
+            self.code = code
         super().__init__(self.message)
 
 
@@ -64,6 +70,14 @@ class ForbiddenError(AppError):
     status_code = status.HTTP_403_FORBIDDEN
     code = "forbidden"
     message = "You do not have access to this resource."
+
+
+class BadGatewayError(AppError):
+    """An upstream dependency answered, but the answer was unusable."""
+
+    status_code = status.HTTP_502_BAD_GATEWAY
+    code = "bad_gateway"
+    message = "An upstream service returned an invalid response."
 
 
 class ServiceUnavailableError(AppError):
