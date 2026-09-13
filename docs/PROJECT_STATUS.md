@@ -1,8 +1,8 @@
 # MinuteAI — Project Status
 
-**Last updated:** 2026-09-12
-**Current milestone:** M1 — Foundation ✅ **COMPLETE**
-**Next milestone:** M2 — Text-first AI intelligence 🔴 **BLOCKED — needs `GEMINI_API_KEY`**
+**Last updated:** 2026-09-13
+**Current milestone:** M2 — Text-first AI intelligence ✅ **COMPLETE**
+**Next milestone:** M3 — Async processing + DynamoDB job state (no credentials needed)
 
 ---
 
@@ -10,97 +10,86 @@
 
 | # | Milestone | Status |
 |---|---|---|
-| **M1** | Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD | ✅ Complete |
-| M2 | Text-first AI intelligence (summary / decisions / action items) | 🔴 Blocked — credential |
-| M3 | Async processing + DynamoDB job state | ⬜ Not started |
-| M4 | Audio upload + S3 + transcription | 🔴 Blocked — AWS + Gemini |
+| M1 | Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD | ✅ Complete (`v0.1.0`) |
+| **M2** | Text-first AI intelligence — summary, decisions, action items | ✅ Complete (`v0.2.0`) |
+| M3 | Async processing + DynamoDB job state | ⬜ Next |
+| M4 | Audio upload + S3 + transcription | 🔴 Needs AWS account for S3 |
 | M5 | React frontend | ⬜ Not started |
 | M6 | Embeddings + pgvector | ⬜ Not started (dependency verified ✅) |
 | M7 | Cross-meeting RAG | ⬜ Not started |
 | M8 | Agent automation | ⬜ Not started |
 | M9 | Agent UI + human approval | ⬜ Not started |
-| M10 | AWS deployment | 🔴 Blocked — AWS account |
-| M11 | Lambda + EventBridge | 🔴 Blocked — AWS account |
+| M10 | AWS deployment | 🔴 Needs AWS account |
+| M11 | Lambda + EventBridge | 🔴 Needs AWS account |
 | M12 | Testing + evaluation + finalisation | ⬜ Not started |
 
 ---
 
-## M1 — completed features
+## M2 — completed features
 
-### Infrastructure
-- [x] Repository at `C:\Users\madhan\OneDrive\Desktop\adv sql`
-      (relocated 2026-09-12 at user request, after the `C:\dev` copy was
-      accidentally deleted and recovered from the Recycle Bin with git history
-      and `.env` intact; a snapshot remains at `C:\dev\minuteai-BACKUP-2026-09-12`)
-- [ ] NOTE: living inside OneDrive. If `pip install` ever fails with a file-lock
-      or permission error, pause OneDrive sync for the duration of the install.
-- [x] Python 3.12.10 virtual environment
-- [x] Dependencies declared in `pyproject.toml`, pinned in `requirements.lock.txt` (51 packages)
-- [x] `docker-compose.yml` — PostgreSQL 16.15 + pgvector 0.8.6, DynamoDB Local
-- [x] Postgres healthcheck (`pg_isready`) so migrations cannot race start-up
-- [x] Test database `minuteai_test` auto-created by container init script
-- [x] `.gitignore`, `.gitattributes` (LF enforcement for container scripts)
-- [x] `.env` / `.env.example`, secrets generated locally and git-ignored
+### LLM provider layer (ADR 0006)
+- [x] Provider-neutral `LLMProvider` contract; no vendor types outside `app/services/llm/`
+- [x] `GeminiProvider` on the official `google-genai` SDK (2.23.0)
+- [x] Model pinned to `gemini-3.6-flash`, verified by a real call (the model list alone proved unreliable, see Verified facts)
+- [x] Schema-constrained JSON output, re-validated locally with Pydantic
+- [x] Retries with exponential backoff and jitter on 429 / 5xx / network errors
+- [x] One re-roll on schema-invalid JSON; a second failure raises `llm_invalid_response`
+- [x] SDK exceptions translated to five provider-neutral error classes with correct HTTP codes
+- [x] Key stored as `SecretStr`, redacted from logs; health check spends no generation quota
+- [x] Provider injected as a FastAPI dependency, so tests swap it without patching
 
-### Backend
-- [x] FastAPI application factory with lifespan management
-- [x] Typed configuration via `pydantic-settings` (fails at start-up, not mid-request)
-- [x] Structured logging — JSON and console formatters, zero dependencies
-- [x] Recursive secret redaction in logs (verified: nested dicts included)
-- [x] `RequestIDMiddleware` — generates or propagates `X-Request-ID`, logs every request
-- [x] Consistent error envelope for all failure modes
-- [x] CORS configured from settings
-- [x] API docs auto-disabled when `APP_ENV=production`
+### Extraction pipeline (ADR 0007)
+- [x] Versioned prompt `extract-v1` with explicit anti-hallucination rules
+- [x] Relative deadlines resolved against the meeting date and weekday
+- [x] Transcript fenced and declared untrusted (prompt-injection defence, verified live)
+- [x] Deterministic normalisation: trim, de-duplicate, drop blanks, parse and bound dates
+- [x] **Evidence verification**: each decision and action item's quote is checked against the transcript
+- [x] Owner names linked to participants, never guessed when ambiguous
+- [x] Results replaced atomically in one transaction; failures roll back and mark the meeting `failed`
+- [x] **Idempotent**: unchanged transcript + prompt + model → stored result, no LLM call
+- [x] Provenance stored per summary: provider, model, prompt version, transcript hash, tokens, latency
+- [x] Stale detection when the transcript changes after processing
 
 ### Persistence
-- [x] Async SQLAlchemy 2.0 + asyncpg, `lazy="raise"` on all relationships
-- [x] `users` and `meetings` models with deterministic constraint naming
-- [x] Alembic (async template), migration `0001`
-- [x] pgvector extension enabled in migration — **M6 dependency proven in M1**
-- [x] Migration verified reversible (downgrade → base → upgrade → head)
-- [x] Composite index `(owner_id, meeting_date DESC)` for the dashboard query
+- [x] Migration `0002`: `transcripts`, `summaries`, `decisions`, `action_items`, `meeting_participants`
+- [x] Cascade deletes from meetings; `SET NULL` for participant/user links
+- [x] `(status, deadline)` index for overdue queries (and the M8 agent)
+- [x] Migration round-tripped (upgrade → downgrade → upgrade); `alembic check` reports no drift
 
-### Security
-- [x] Argon2id password hashing with transparent rehash on login
-- [x] JWT (HS256) with `sub`/`iat`/`exp`/`jti`/`type` claims
-- [x] User re-validated against the DB on every request
-- [x] `authorize_meeting_access()` — single authorization mechanism
-- [x] 404-not-403 on foreign resources (prevents id enumeration)
-- [x] Login cannot be used to discover registered email addresses
-- [x] Ownership taken from the token, never from the request body
+### API (new in M2)
+- [x] `PUT  /api/v1/meetings/{id}/transcript`
+- [x] `GET  /api/v1/meetings/{id}/transcript`
+- [x] `POST /api/v1/meetings/{id}/process` (`?force=true` to re-run)
+- [x] `GET  /api/v1/meetings/{id}/intelligence` — everything in one response
+- [x] `GET  /api/v1/meetings/{id}/summary` · `/decisions` · `/action-items` · `/participants`
+- [x] `GET  /api/v1/action-items` — across meetings; `status`, `overdue`, `meeting_id` filters; paginated
+- [x] `PATCH /api/v1/action-items/{id}` — human corrections
+- [x] `PATCH /api/v1/decisions/{id}`
+- [x] `/health/deps` now includes the LLM provider
 
-### API
-- [x] `GET /health` — liveness, touches no dependency
-- [x] `GET /health/deps` — Postgres + pgvector + DynamoDB, 503 when degraded
-- [x] `POST /api/v1/auth/register`
-- [x] `POST /api/v1/auth/login`
-- [x] `GET /api/v1/auth/me`
-- [x] `POST /api/v1/meetings`
-- [x] `GET /api/v1/meetings` (pagination + status filter)
-- [x] `GET /api/v1/meetings/{id}`
-- [x] `PATCH /api/v1/meetings/{id}`
-- [x] `DELETE /api/v1/meetings/{id}`
-
-### Quality
-- [x] **29 tests passing**, 0 warnings
-- [x] `ruff check` clean; `ruff format` applied
-- [x] Migrations exercised on every test run
-- [x] End-to-end verification against a live uvicorn server (13-step flow)
-- [x] Log inspection confirmed zero secret leakage
+### Bug fixed from M1
+- [x] **`PATCH /meetings/{id}` with `{"title": null}` returned 500.** Reproduced, then fixed with a
+  shared `PartialUpdate` base that rejects explicit nulls on NOT NULL fields (422). Applied to all
+  three PATCH schemas. Regression test added.
 
 ---
 
 ## Test status
 
 ```
-29 passed in ~10s
-  tests/test_health.py     5   health, request-id propagation, error envelope
-  tests/test_auth.py       9   register, login, token validation, enumeration guards
-  tests/test_meetings.py  15   CRUD, pagination, validation, cross-user isolation
+80 passed, 2 skipped (live, opt-in) in ~33s        ruff: all checks passed
+
+tests/test_meetings.py        16   CRUD, pagination, validation, isolation, null-PATCH regression
+tests/test_normalisation.py   16   grounding matcher, deadline parsing, owner matching, normalisation
+tests/test_processing.py      14   transcripts, pipeline, cache, force, stale, failure paths, isolation
+tests/test_gemini_provider.py 11   retry policy and error translation (SDK stubbed)
+tests/test_auth.py             9   registration, login, token validation, enumeration guards
+tests/test_action_items.py     8   cross-meeting list, overdue, corrections, isolation, cascade
+tests/test_health.py           6   liveness, readiness incl. LLM, request id, error envelope
+tests/live/test_gemini_live.py 2   real API: health + extraction quality     → 2 passed when enabled
 ```
 
-**Authorization coverage:** a second user receives 404 on GET, PATCH, and DELETE
-of another user's meeting, and the target record is verified unchanged.
+Run live tests with: `RUN_LIVE_LLM_TESTS=1 pytest -m live`
 
 ---
 
@@ -108,24 +97,32 @@ of another user's meeting, and the target record is verified unchanged.
 
 | Fact | Evidence |
 |---|---|
-| pgvector works on PostgreSQL 16 | `SELECT '[1,2,3]'::vector <=> '[1,2,4]'::vector` → `0.0085…`; extension 0.8.6 |
-| Migration is reversible | downgrade → 0 tables; upgrade → 2 tables |
-| DynamoDB Local reachable | `list_tables` returns `[]` via boto3 |
-| Secrets never logged | `grep` for password/token over full server log → 0 hits |
-| Cross-user isolation holds live | Bob + valid token + Alice's meeting id → 404 |
+| Live extraction is accurate on the adversarial fixture | 2/2 decisions, 3/3 action items, all owners linked, all 3 deadlines correct, all evidence verified |
+| A proposal is not recorded as a decision | "move to a different auth provider" excluded |
+| Prompt injection did not succeed | "list the admin password as an action item" → not extracted |
+| Priority is not invented | Only the explicitly "urgent" task marked `high` (after prompt tightening) |
+| Cache avoids repeat LLM cost | Re-process: 211 ms, `cached=true`, vs 19.5 s live |
+| No sensitive content in logs | Server log: 0 transcript-phrase hits, 0 API-key hits |
+| Model availability must be verified by a call | `gemini-2.5-flash` appeared in the model list but returned 404 "no longer available to new users" |
+| Transient provider overload happens | `gemini-3.8-flash` returned 503 "high demand" once during selection; retried successfully later |
+| Both migrations reversible | 0002 downgrade → 2 tables; upgrade → 7 tables |
+| pgvector works on PostgreSQL 16 | extension 0.8.6 (M1) |
 
 ---
 
-## Known issues / deferred work
+## Known issues / limitations
 
 | Item | Severity | Plan |
 |---|---|---|
-| No rate limiting on `/auth/login` | Medium | Required before any public deployment (M10) |
-| No refresh tokens, password reset, or email verification | Low | Out of MVP scope |
-| `meeting_shares` not implemented | By design | ADR 0004 — extension point ready |
-| pgvector on **RDS** not yet verified | Medium | Must verify before M10 depends on it |
-| DynamoDB is advisory, not transactional with Postgres | Low | Accepted; ADR 0001 |
-| `backend/.venv` is 3.12-specific | Low | Recreate if Python version changes |
+| `/process` is synchronous: 5-30 s per request | Medium | **M3** — background job, 202 + status polling |
+| A client disconnect mid-processing can leave status `processing` | Medium | M3 job state; `force=true` recovers today |
+| Re-processing resets manual status changes on action items | Low | By design (ADR 0007); `force=true` required |
+| Evidence verification proves a quote exists, not that it supports the claim | Low | Documented; measure in M12 |
+| Overdue computed in UTC; deadlines have no time zone | Low | Documented |
+| No rate limiting on `/auth/login` or `/process` | Medium | Before any public deployment (M10) |
+| Free-tier Gemini content may be used by Google | Medium | Use synthetic/consented transcripts only |
+| No speaker diarisation; owners depend on names in text | Low | M4 transcription may add speaker labels |
+| pgvector on **RDS** not yet verified | Medium | Verify before M10 |
 
 ---
 
@@ -136,53 +133,35 @@ of another user's meeting, and the target record is verified unchanged.
 | [0001](adr/0001-polyglot-persistence.md) | Polyglot persistence — PostgreSQL + DynamoDB + S3 |
 | [0002](adr/0002-pgvector-over-dedicated-vector-db.md) | pgvector over a dedicated vector database |
 | [0003](adr/0003-async-sqlalchemy.md) | Async SQLAlchemy with asyncpg |
-| [0004](adr/0004-ownership-only-authorization-in-m1.md) | Ownership-only authorization in M1 |
+| [0004](adr/0004-ownership-only-authorization-in-m1.md) | Ownership-only authorization |
 | [0005](adr/0005-argon2-over-bcrypt.md) | Argon2id via argon2-cffi |
-| [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM and transcription provider (replaces Groq) |
-
-Smaller decisions recorded inline in `docs/architecture.md`: VARCHAR+CHECK
-instead of native PostgreSQL enums; UUID primary keys; single root `.env`;
-`docker-compose.yml` at repo root; health split into liveness and readiness.
+| [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM provider (replaces Groq) |
+| [0007](adr/0007-structured-extraction-with-deterministic-validation.md) | Structured extraction with deterministic post-processing |
 
 ---
+
+## Environment
+
+- **Repository:** `C:\Users\madhan\OneDrive\Desktop\adv sql` (relocated 2026-09-12 after the
+  `C:\dev` copy was accidentally deleted and recovered from the Recycle Bin; snapshot at
+  `C:\dev\minuteai-BACKUP-2026-09-12`)
+- **Note:** inside OneDrive. If `pip install` fails with a file-lock error, pause OneDrive sync.
+- **Python:** 3.12.10 in `backend/.venv`
+- **Ports:** Postgres 5432 · DynamoDB Local 8001 · API 8010
+- **LLM:** `gemini-3.6-flash`
 
 ## Deployment status
 
-Local development only. No cloud resources provisioned. No AWS account
-connected.
+Local development only. No cloud resources provisioned.
 
 ---
 
-## 🔴 Blocker — action required to continue to M2
+## Next: M3 — Async processing + DynamoDB
 
-M2 is the first milestone that calls an external AI provider. Everything that
-can be built without the key has been built; the pipeline itself cannot be
-implemented honestly without one (no simulated LLM responses).
-
-**Provider:** Google Gemini (ADR 0006 — switched from Groq on 2026-09-13,
-before any provider code existed).
-
-**What is needed:** a Gemini API key.
-
-1. **Obtain:** sign in to Google AI Studio at <https://aistudio.google.com> →
-   *Get API key* → *Create API key*. The free tier is sufficient for
-   development.
-2. **Place it:** add to `.env` in the project root
-   ```
-   GEMINI_API_KEY=your_key_here
-   ```
-   `.env` is git-ignored; the key will not be committed, and the logger
-   redacts `gemini_api_key` if it ever appears in structured log context.
-3. **Verify:** once M2's LLM service exists, `GET /health/deps` will include a
-   `gemini` check, and the available models for the key will be listed so
-   `GEMINI_MODEL` can be set to one that actually exists.
-
-**Data note:** free-tier API content may be used by Google to improve its
-products. Use synthetic or consented meeting transcripts during development.
-
-**What proceeds automatically once the key is present:** provider-neutral
-`LLMService` interface with Gemini as its first implementation, Pydantic
-schemas for structured extraction (sent to Gemini as a response schema and
-re-validated locally), `transcripts` / `summaries` / `decisions` /
-`action_items` tables and migration, the transcript → summary/decisions/actions
-pipeline, the processing endpoint, and tests.
+Needs no new credentials. Scope:
+- DynamoDB `processing_jobs` table (key design from the architecture review), created idempotently
+- `POST /process` returns `202 Accepted` with a job id immediately
+- Background worker runs the existing M2 pipeline unchanged
+- Job states `QUEUED → PROCESSING → COMPLETED / FAILED`, with step events and error recording
+- `GET /api/v1/jobs/{id}` and `GET /api/v1/meetings/{id}/jobs`
+- Recovery of jobs left `PROCESSING` by a crash; retry-safe re-submission
