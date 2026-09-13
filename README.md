@@ -7,7 +7,7 @@ Turns meeting audio, video, or transcripts into structured, queryable, and
 actionable knowledge: summaries, decisions, action items, cross-meeting
 semantic Q&A, and proactive follow-up detection.
 
-> **Status: M2 — Text-first AI intelligence ✅ complete.** 80 tests passing (+2 opt-in live tests).
+> **Status: M3 — Async processing + DynamoDB ✅ complete.** 111 tests passing (+2 opt-in live tests).
 > See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
 
 ---
@@ -19,7 +19,7 @@ semantic Q&A, and proactive follow-up detection.
 | API | FastAPI, Python 3.12 | Async, typed, self-documenting |
 | Relational store | PostgreSQL 16 | Source of truth for all business data |
 | Vector search | pgvector (inside PostgreSQL) | Keeps ACL filtering and vectors in one transactional store — [ADR 0002](docs/adr/0002-pgvector-over-dedicated-vector-db.md) |
-| Workflow state | DynamoDB | Schema-fluid job state with TTL expiry — [ADR 0001](docs/adr/0001-polyglot-persistence.md) |
+| Workflow state | DynamoDB | Processing-job queue with leases, retries, and TTL — [ADR 0008](docs/adr/0008-dynamodb-job-queue-with-leased-workers.md) |
 | Object storage | Amazon S3 *(M4)* | Audio, video, transcripts, exports |
 | LLM + transcription | Google Gemini *(M2)* | One provider behind a swappable interface — [ADR 0006](docs/adr/0006-gemini-as-initial-llm-provider.md) |
 | Auth | JWT + Argon2id | [ADR 0005](docs/adr/0005-argon2-over-bcrypt.md) |
@@ -126,8 +126,9 @@ Expected — note `pgvector=yes` and the Gemini model:
 ```json
 {"status":"ok","checks":{
   "postgres":{"healthy":true,"detail":"reachable (pgvector=yes)"},
-  "dynamodb":{"healthy":true,"detail":"reachable (0 table(s))"},
-  "gemini":{"healthy":true,"detail":"reachable (model=gemini-3.6-flash)"}}}
+  "dynamodb":{"healthy":true,"detail":"reachable (jobs table ACTIVE)"},
+  "gemini":{"healthy":true,"detail":"reachable (model=gemini-3.6-flash)"},
+  "worker":{"healthy":true,"detail":"polling (active=0, completed=0, failed=0, retried=0)"}}}
 ```
 
 Run the test suite (from `backend/`):
@@ -136,7 +137,7 @@ Run the test suite (from `backend/`):
 pytest
 ```
 
-Expected: `80 passed, 2 skipped`. The two skipped tests call the real Gemini
+Expected: `111 passed, 2 skipped`. The two skipped tests call the real Gemini
 API and are opt-in:
 
 ```bash
@@ -185,8 +186,26 @@ Karthik: Yes, I will have it ready by Friday."}'
 curl -X POST http://localhost:8010/api/v1/meetings/MEETING_ID/process -H "Authorization: Bearer PASTE_TOKEN"
 ```
 
-Processing takes roughly 5-30 seconds in M2. Calling it again on an unchanged
-transcript returns the stored result instantly (`"cached": true`).
+This returns **202 Accepted** immediately with a `job`. The extraction runs in
+the background (roughly 10-30 seconds). Poll the job until its `status` is
+`COMPLETED` or `FAILED`:
+
+```bash
+curl http://localhost:8010/api/v1/jobs/JOB_ID -H "Authorization: Bearer PASTE_TOKEN"
+```
+
+Then read the results from `GET /api/v1/meetings/MEETING_ID/intelligence`.
+Submitting again on an unchanged transcript returns **200** with
+`"cached": true` and queues nothing.
+
+### Running the worker separately
+
+By default the worker runs inside the API process. To run it as its own process
+(for example, to scale it independently), set `WORKER_EMBEDDED=false` and start:
+
+```bash
+python -m app.workers.processing
+```
 
 ---
 
@@ -206,7 +225,9 @@ transcript returns the stored result instantly (`"cached": true`).
 | DELETE | `/api/v1/meetings/{id}` | ✔ | Delete (cascades to all derived data) |
 | PUT | `/api/v1/meetings/{id}/transcript` | ✔ | Add or replace the transcript |
 | GET | `/api/v1/meetings/{id}/transcript` | ✔ | Get the transcript |
-| POST | `/api/v1/meetings/{id}/process` | ✔ | Run AI extraction (`?force=true` to re-run) |
+| POST | `/api/v1/meetings/{id}/process` | ✔ | Queue AI extraction → 202 + job (`?force=true` to re-run) |
+| GET | `/api/v1/jobs/{job_id}` | ✔ | Poll a processing job |
+| GET | `/api/v1/meetings/{id}/jobs` | ✔ | Processing history for a meeting |
 | GET | `/api/v1/meetings/{id}/intelligence` | ✔ | Summary, participants, decisions, action items |
 | GET | `/api/v1/meetings/{id}/summary` | ✔ | Summary with provenance and `is_stale` |
 | GET | `/api/v1/meetings/{id}/decisions` | ✔ | Decisions |
@@ -248,8 +269,9 @@ minuteai/
    │  ├─ db/                 models, session, migrations
    │  ├─ schemas/            Pydantic request/response models
    │  ├─ api/v1/             routes
-   │  └─ services/           authorization, intelligence, grounding, prompts,
-   │                         dynamo, llm/ (provider contract + Gemini)
+   │  ├─ services/           authorization, intelligence, grounding, prompts,
+   │  │                      job_store, dynamo, llm/ (provider contract + Gemini)
+   │  └─ workers/            background processing worker
    └─ tests/
 ```
 
@@ -266,7 +288,9 @@ minuteai/
 | `address already in use` on 8010 | Another process holds the port | `netstat -ano \| findstr :8010` |
 | `MissingGreenlet` | Lazy-loaded a relationship | Load it explicitly with `selectinload()` — [ADR 0003](docs/adr/0003-async-sqlalchemy.md) |
 | `/process` returns 503 `llm_not_configured` | `GEMINI_API_KEY` empty or invalid | Set it in `.env`, restart the API |
-| `/process` returns 503 `llm_rate_limited` | Gemini free-tier quota reached | Wait and retry; unchanged transcripts are served from cache |
+| Job ends `FAILED` with `llm_rate_limited` | Gemini quota still exhausted after 3 attempts | Wait, then submit again; unchanged transcripts are served from cache |
+| Job stays `QUEUED` forever | No worker running (`WORKER_EMBEDDED=false` without a standalone worker) | Start `python -m app.workers.processing`, or check `worker` in `/health/deps` |
+| `/process` returns 409 `processing_in_progress` on transcript edit | A job is queued or running | Wait for the job to finish |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
 
 ---
@@ -275,7 +299,7 @@ minuteai/
 
 - **M1** ✅ Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD
 - **M2** ✅ Meeting intelligence — Gemini extraction of summary, decisions, action items, with evidence verification
-- M3 Async pipeline + DynamoDB job state
+- **M3** ✅ Async processing — DynamoDB job queue, leased workers, retries, crash recovery
 - M4 Audio upload + S3 + transcription
 - M5 React UI
 - M6 Embeddings + pgvector

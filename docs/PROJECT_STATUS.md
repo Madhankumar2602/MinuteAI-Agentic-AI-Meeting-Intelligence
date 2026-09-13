@@ -1,8 +1,8 @@
 # MinuteAI — Project Status
 
 **Last updated:** 2026-09-13
-**Current milestone:** M2 — Text-first AI intelligence ✅ **COMPLETE**
-**Next milestone:** M3 — Async processing + DynamoDB job state (no credentials needed)
+**Current milestone:** M3 — Async processing + DynamoDB ✅ **COMPLETE**
+**Next milestone:** M4 — Audio + S3 + transcription (needs an AWS account for S3; see below)
 
 ---
 
@@ -10,12 +10,12 @@
 
 | # | Milestone | Status |
 |---|---|---|
-| M1 | Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD | ✅ Complete (`v0.1.0`) |
-| **M2** | Text-first AI intelligence — summary, decisions, action items | ✅ Complete (`v0.2.0`) |
-| M3 | Async processing + DynamoDB job state | ⬜ Next |
+| M1 | Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD | ✅ `v0.1.0` |
+| M2 | Text-first AI intelligence — summary, decisions, action items | ✅ `v0.2.0` |
+| **M3** | Async processing + DynamoDB job state | ✅ `v0.3.0` |
 | M4 | Audio upload + S3 + transcription | 🔴 Needs AWS account for S3 |
-| M5 | React frontend | ⬜ Not started |
-| M6 | Embeddings + pgvector | ⬜ Not started (dependency verified ✅) |
+| M5 | React frontend | ⬜ Not started — needs no credentials |
+| M6 | Embeddings + pgvector | ⬜ Not started — needs no credentials |
 | M7 | Cross-meeting RAG | ⬜ Not started |
 | M8 | Agent automation | ⬜ Not started |
 | M9 | Agent UI + human approval | ⬜ Not started |
@@ -25,88 +25,89 @@
 
 ---
 
-## M2 — completed features
+## M3 — completed features
 
-### LLM provider layer (ADR 0006)
-- [x] Provider-neutral `LLMProvider` contract; no vendor types outside `app/services/llm/`
-- [x] `GeminiProvider` on the official `google-genai` SDK (2.23.0)
-- [x] Model pinned to `gemini-3.6-flash`, verified by a real call (the model list alone proved unreliable, see Verified facts)
-- [x] Schema-constrained JSON output, re-validated locally with Pydantic
-- [x] Retries with exponential backoff and jitter on 429 / 5xx / network errors
-- [x] One re-roll on schema-invalid JSON; a second failure raises `llm_invalid_response`
-- [x] SDK exceptions translated to five provider-neutral error classes with correct HTTP codes
-- [x] Key stored as `SecretStr`, redacted from logs; health check spends no generation quota
-- [x] Provider injected as a FastAPI dependency, so tests swap it without patching
+### Job queue in DynamoDB (ADR 0008)
+- [x] Table `minuteai_processing_jobs`: job items + per-meeting lock items, `gsi_meeting`, `gsi_status`, TTL 30 days
+- [x] Created idempotently at start-up (`DYNAMODB_AUTO_CREATE_TABLES`, off in AWS)
+- [x] Submission is one transaction: job + lock, both conditional → **at most one active job per meeting**
+- [x] Duplicate or concurrent submissions return the existing active job (tested with 5 concurrent submits)
+- [x] Claim by conditional update → **exactly one winner** (tested with 5 concurrent claimers)
+- [x] FIFO claiming; retry back-off honoured via `available_at`
+- [x] Leases with heartbeat renewal; **fencing**: stale workers cannot overwrite outcomes
+- [x] Recovery of jobs abandoned by crashed workers (requeue, or fail when attempts are exhausted)
+- [x] Terminal transition + lock release in one transaction
+- [x] Per-job event timeline: `queued → started → retry_scheduled / lease_expired_requeued → completed / failed`
+- [x] Strongly consistent job polling (base-table `GetItem`)
 
-### Extraction pipeline (ADR 0007)
-- [x] Versioned prompt `extract-v1` with explicit anti-hallucination rules
-- [x] Relative deadlines resolved against the meeting date and weekday
-- [x] Transcript fenced and declared untrusted (prompt-injection defence, verified live)
-- [x] Deterministic normalisation: trim, de-duplicate, drop blanks, parse and bound dates
-- [x] **Evidence verification**: each decision and action item's quote is checked against the transcript
-- [x] Owner names linked to participants, never guessed when ambiguous
-- [x] Results replaced atomically in one transaction; failures roll back and mark the meeting `failed`
-- [x] **Idempotent**: unchanged transcript + prompt + model → stored result, no LLM call
-- [x] Provenance stored per summary: provider, model, prompt version, transcript hash, tokens, latency
-- [x] Stale detection when the transcript changes after processing
+### Worker
+- [x] `ProcessingWorker`: runs embedded in the API (default) or standalone (`python -m app.workers.processing`)
+- [x] Bounded concurrency (`WORKER_CONCURRENCY`), wake-on-submit, 2 s polling, 10 s drain on shutdown
+- [x] Error classification: transient errors retried at 30 s × 4^(n−1) up to 3 attempts; permanent errors fail at once
+- [x] Safe error messages only; raw exception text stays in logs
+- [x] Crash after results were committed → recovered job completes from cache, no second LLM call
+- [x] Worker health in `/health/deps` when embedded
 
-### Persistence
-- [x] Migration `0002`: `transcripts`, `summaries`, `decisions`, `action_items`, `meeting_participants`
-- [x] Cascade deletes from meetings; `SET NULL` for participant/user links
-- [x] `(status, deadline)` index for overdue queries (and the M8 agent)
-- [x] Migration round-tripped (upgrade → downgrade → upgrade); `alembic check` reports no drift
+### API
+- [x] `POST /api/v1/meetings/{id}/process` → **202** with job (median **83 ms**, was 19.5 s) or **200** `{cached: true}`
+- [x] `GET  /api/v1/jobs/{job_id}` — authorised through the job's meeting
+- [x] `GET  /api/v1/meetings/{id}/jobs` — history, newest first
+- [x] New meeting status `queued`; transcript edits refused while queued or processing
+- [x] `/health/deps` checks the jobs table is `ACTIVE`, not just that DynamoDB answers
 
-### API (new in M2)
-- [x] `PUT  /api/v1/meetings/{id}/transcript`
-- [x] `GET  /api/v1/meetings/{id}/transcript`
-- [x] `POST /api/v1/meetings/{id}/process` (`?force=true` to re-run)
-- [x] `GET  /api/v1/meetings/{id}/intelligence` — everything in one response
-- [x] `GET  /api/v1/meetings/{id}/summary` · `/decisions` · `/action-items` · `/participants`
-- [x] `GET  /api/v1/action-items` — across meetings; `status`, `overdue`, `meeting_id` filters; paginated
-- [x] `PATCH /api/v1/action-items/{id}` — human corrections
-- [x] `PATCH /api/v1/decisions/{id}`
-- [x] `/health/deps` now includes the LLM provider
+### Pipeline refactor
+- [x] `process_meeting` split into `require_transcript`, `is_result_current`, `run_extraction`, `set_meeting_status`
+- [x] The worker, not the pipeline, decides `queued` vs `failed`, because only the worker knows whether it will retry
 
-### Bug fixed from M1
-- [x] **`PATCH /meetings/{id}` with `{"title": null}` returned 500.** Reproduced, then fixed with a
-  shared `PartialUpdate` base that rejects explicit nulls on NOT NULL fields (422). Applied to all
-  three PATCH schemas. Regression test added.
+---
+
+## Defects found and fixed during M3
+
+| # | Defect | How found | Fix |
+|---|---|---|---|
+| 1 | **Enum CHECK constraints never existed.** Docs and model comments claimed `VARCHAR + CHECK`; PostgreSQL accepted `status = 'nonsense'` | Checked the live schema before adding a status | `create_constraint=True` on all enums; migration `0003` adds 6 constraints; raw-SQL regression tests |
+| 2 | **Crash-recovery cache check could never succeed.** `is_result_current` required status `completed`, but recovery had just set it to `queued` | New recovery test failed | Currency decided from atomically-stored provenance alone; status restored on cache hit |
+| 3 | **Production-only 500 on every `/process`.** `extra={"created": …}` is a reserved `LogRecord` key | Live run through uvicorn | Key renamed; static test rejects reserved keys |
+| 4 | **All app logging silently disabled in tests since M1.** Alembic's `fileConfig` defaults to `disable_existing_loggers=True` | Investigating why #3 escaped the suite | `disable_existing_loggers=False`; tests assert loggers are enabled and run at DEBUG; proven by reintroducing #3 |
+| 5 | DynamoDB `ValidationException` reported as "temporarily unavailable" (503) | `result` reserved-word error during store smoke test | Only throttling/service errors map to 503; attribute-name placeholders in expressions |
 
 ---
 
 ## Test status
 
 ```
-80 passed, 2 skipped (live, opt-in) in ~33s        ruff: all checks passed
+111 passed, 2 skipped (live, opt-in) in ~59s     ruff: clean     alembic check: no drift
+live Gemini tests: 2 passed
 
-tests/test_meetings.py        16   CRUD, pagination, validation, isolation, null-PATCH regression
-tests/test_normalisation.py   16   grounding matcher, deadline parsing, owner matching, normalisation
-tests/test_processing.py      14   transcripts, pipeline, cache, force, stale, failure paths, isolation
-tests/test_gemini_provider.py 11   retry policy and error translation (SDK stubbed)
-tests/test_auth.py             9   registration, login, token validation, enumeration guards
-tests/test_action_items.py     8   cross-meeting list, overdue, corrections, isolation, cascade
-tests/test_health.py           6   liveness, readiness incl. LLM, request id, error envelope
-tests/live/test_gemini_live.py 2   real API: health + extraction quality     → 2 passed when enabled
+tests/test_jobs.py              16  submission, worker success/retry/back-off/max attempts,
+                                    permanent failure, resubmission, deleted meeting,
+                                    crash recovery (x2), run_forever loop, authorization
+tests/test_meetings.py          16  CRUD, pagination, validation, isolation
+tests/test_normalisation.py     16  grounding, deadlines, owner matching, normalisation
+tests/test_job_store.py         12  real DynamoDB Local: concurrency, FIFO, locks, leases, fencing, TTL
+tests/test_processing.py        12  transcripts, extraction results, cache, force, staleness, isolation
+tests/test_gemini_provider.py   11  retry policy and error translation
+tests/test_auth.py               9  registration, login, tokens, enumeration guards
+tests/test_action_items.py       8  cross-meeting list, overdue, corrections, isolation, cascade
+tests/test_health.py             6  liveness, readiness, request id, error envelope
+tests/test_schema_constraints.py 4  database rejects invalid enum values (raw SQL)
+tests/test_logging_hygiene.py    1  no reserved LogRecord keys in any log call
+tests/live/test_gemini_live.py   2  real API (opt-in)
 ```
-
-Run live tests with: `RUN_LIVE_LLM_TESTS=1 pytest -m live`
 
 ---
 
-## Verified facts
+## Verified live (real processes, DynamoDB Local, Gemini)
 
-| Fact | Evidence |
+| Scenario | Result |
 |---|---|
-| Live extraction is accurate on the adversarial fixture | 2/2 decisions, 3/3 action items, all owners linked, all 3 deadlines correct, all evidence verified |
-| A proposal is not recorded as a decision | "move to a different auth provider" excluded |
-| Prompt injection did not succeed | "list the admin password as an action item" → not extracted |
-| Priority is not invented | Only the explicitly "urgent" task marked `high` (after prompt tightening) |
-| Cache avoids repeat LLM cost | Re-process: 211 ms, `cached=true`, vs 19.5 s live |
-| No sensitive content in logs | Server log: 0 transcript-phrase hits, 0 API-key hits |
-| Model availability must be verified by a call | `gemini-2.5-flash` appeared in the model list but returned 404 "no longer available to new users" |
-| Transient provider overload happens | `gemini-3.8-flash` returned 503 "high demand" once during selection; retried successfully later |
-| Both migrations reversible | 0002 downgrade → 2 tables; upgrade → 7 tables |
-| pgvector works on PostgreSQL 16 | extension 0.8.6 (M1) |
+| Submit | `202` in 37–108 ms (median 83 ms) warm; first request after start 1.4 s (cold clients) |
+| **Worker hard-killed mid-Gemini call** | Lease expired 20.5 s after start (20 s lease); worker #2 recovered it, completed on attempt 2 with 2 decisions / 3 action items; single job record |
+| Job left by an earlier killed worker | Recovered (`stale job recovered`) and completed by the next worker |
+| Standalone worker + API without embedded worker | Works |
+| Embedded worker, 3 simultaneous jobs | Max 2 concurrent extractions; all completed in 13–30 s |
+| Re-submit unchanged meeting | `200 cached=true` in 15 ms |
+| `/health/deps` | postgres, dynamodb (jobs table ACTIVE), gemini, worker all healthy |
 
 ---
 
@@ -114,15 +115,16 @@ Run live tests with: `RUN_LIVE_LLM_TESTS=1 pytest -m live`
 
 | Item | Severity | Plan |
 |---|---|---|
-| `/process` is synchronous: 5-30 s per request | Medium | **M3** — background job, 202 + status polling |
-| A client disconnect mid-processing can leave status `processing` | Medium | M3 job state; `force=true` recovers today |
-| Re-processing resets manual status changes on action items | Low | By design (ADR 0007); `force=true` required |
-| Evidence verification proves a quote exists, not that it supports the claim | Low | Documented; measure in M12 |
-| Overdue computed in UTC; deadlines have no time zone | Low | Documented |
-| No rate limiting on `/auth/login` or `/process` | Medium | Before any public deployment (M10) |
-| Free-tier Gemini content may be used by Google | Medium | Use synthetic/consented transcripts only |
-| No speaker diarisation; owners depend on names in text | Low | M4 transcription may add speaker labels |
-| pgvector on **RDS** not yet verified | Medium | Verify before M10 |
+| Job outcome (DynamoDB) and meeting status (PostgreSQL) are not one transaction — a crash between them can leave them disagreeing | Low | Job is authoritative; resubmission corrects it. Documented in ADR 0008 |
+| LLM calls are at-least-once: a crash mid-call spends quota again on recovery | Low | Results replaced idempotently |
+| Standalone worker may start a job up to 2 s late (polling) | Low | Embedded worker is woken instantly |
+| Graceful shutdown drains for only 10 s; longer jobs are recovered after lease expiry | Low | By design |
+| Graceful shutdown drain not exercised live (Windows cannot send Ctrl+C to a background process); covered by the `run_forever` stop test | Low | Re-verify in M10 on Linux |
+| Re-processing resets manual status changes on action items | Low | ADR 0007; `force=true` required |
+| Evidence verification proves a quote exists, not that it supports the claim | Low | Measure in M12 |
+| No rate limiting on `/auth/login` or `/process` | Medium | Before public deployment (M10) |
+| Free-tier Gemini content may be used by Google | Medium | Synthetic/consented transcripts only |
+| pgvector on RDS not yet verified | Medium | Before M10 |
 
 ---
 
@@ -135,20 +137,18 @@ Run live tests with: `RUN_LIVE_LLM_TESTS=1 pytest -m live`
 | [0003](adr/0003-async-sqlalchemy.md) | Async SQLAlchemy with asyncpg |
 | [0004](adr/0004-ownership-only-authorization-in-m1.md) | Ownership-only authorization |
 | [0005](adr/0005-argon2-over-bcrypt.md) | Argon2id via argon2-cffi |
-| [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM provider (replaces Groq) |
+| [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM provider |
 | [0007](adr/0007-structured-extraction-with-deterministic-validation.md) | Structured extraction with deterministic post-processing |
+| [0008](adr/0008-dynamodb-job-queue-with-leased-workers.md) | DynamoDB job queue with leased workers (refines the review's key design) |
 
 ---
 
 ## Environment
 
-- **Repository:** `C:\Users\madhan\OneDrive\Desktop\adv sql` (relocated 2026-09-12 after the
-  `C:\dev` copy was accidentally deleted and recovered from the Recycle Bin; snapshot at
-  `C:\dev\minuteai-BACKUP-2026-09-12`)
+- **Repository:** `C:\Users\madhan\OneDrive\Desktop\adv sql` (snapshot of M1 at `C:\dev\minuteai-BACKUP-2026-09-12`)
 - **Note:** inside OneDrive. If `pip install` fails with a file-lock error, pause OneDrive sync.
-- **Python:** 3.12.10 in `backend/.venv`
-- **Ports:** Postgres 5432 · DynamoDB Local 8001 · API 8010
-- **LLM:** `gemini-3.6-flash`
+- **Python:** 3.12.10 in `backend/.venv` · **Ports:** Postgres 5432 · DynamoDB Local 8001 · API 8010
+- **LLM:** `gemini-3.6-flash` · **Jobs table (dev):** `minuteai_processing_jobs`
 
 ## Deployment status
 
@@ -156,12 +156,13 @@ Local development only. No cloud resources provisioned.
 
 ---
 
-## Next: M3 — Async processing + DynamoDB
+## Next
 
-Needs no new credentials. Scope:
-- DynamoDB `processing_jobs` table (key design from the architecture review), created idempotently
-- `POST /process` returns `202 Accepted` with a job id immediately
-- Background worker runs the existing M2 pipeline unchanged
-- Job states `QUEUED → PROCESSING → COMPLETED / FAILED`, with step events and error recording
-- `GET /api/v1/jobs/{id}` and `GET /api/v1/meetings/{id}/jobs`
-- Recovery of jobs left `PROCESSING` by a crash; retry-safe re-submission
+**M4 (audio + S3 + transcription)** is the next milestone in order. It needs an
+AWS account for S3. Everything else in M4 can be built first: the upload flow,
+audio validation, Gemini transcription (the key already works), the `transcribe`
+pipeline step, and an S3 storage interface. Only the final live S3 wiring waits
+on credentials.
+
+**M5 (frontend)** and **M6 (embeddings + pgvector)** need no credentials at all
+and could be done first.

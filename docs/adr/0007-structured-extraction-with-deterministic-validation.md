@@ -124,6 +124,6 @@ a candidate for M12 *evaluation*, not for the production path.
   The API requires `force=true` for an unchanged transcript for this reason.
 - Deadlines are dates without a time zone; overdue is computed in UTC.
 - Processing is synchronous in M2 (5-30 s per request). M3 moves it to a
-  background job.
+  background job. *(Superseded by [ADR 0008](0008-dynamodb-job-queue-with-leased-workers.md): processing is now queued and `POST /process` returns in ~80 ms.)*
 - Owner extraction depends on names appearing in the transcript. There is no
   speaker diarisation.
