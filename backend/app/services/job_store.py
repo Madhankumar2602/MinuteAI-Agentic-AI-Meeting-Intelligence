@@ -497,6 +497,33 @@ class JobStore:
             return job
         return None
 
+    async def add_event(
+        self, *, job: JobRecord, worker_id: str, event_type: str, **detail: Any
+    ) -> bool:
+        """Append a progress event (e.g. transcription_started) while running."""
+        now = self._clock()
+        try:
+            await self._call(
+                "update_item",
+                TableName=self.table_name,
+                Key=_to_ddb({"pk": _job_pk(job.job_id)}),
+                UpdateExpression="SET events = list_append(events, :ev), updated_at = :now",
+                ConditionExpression="job_status = :p AND worker_id = :w",
+                ExpressionAttributeValues=_to_ddb(
+                    {
+                        ":ev": [self._event(event_type, **detail)],
+                        ":now": _iso(now),
+                        ":p": JobStatus.PROCESSING.value,
+                        ":w": worker_id,
+                    }
+                ),
+            )
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+
     async def renew_lease(self, *, job_id: str, worker_id: str, lease_seconds: int) -> bool:
         """Heartbeat. False means this worker no longer owns the job."""
         now = self._clock()

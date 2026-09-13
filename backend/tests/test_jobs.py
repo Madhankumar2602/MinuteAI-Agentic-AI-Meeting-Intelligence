@@ -104,6 +104,7 @@ async def test_worker_completes_job_and_records_result(
     assert job["started_at"] and job["finished_at"]
     assert job["result"] == {
         "cached": False,
+        "transcribed": False,  # text transcript: no recording to transcribe
         "decisions": 2,
         "action_items": 3,
         "participants": 4,

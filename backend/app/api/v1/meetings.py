@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import uuid
 from typing import Annotated
+from typing import Annotated as _Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import func, select
 
 from app.core.deps import CurrentUser, DbSession
@@ -24,6 +25,7 @@ from app.schemas.meeting import (
     MeetingUpdateRequest,
 )
 from app.services.authorization import AccessLevel, authorize_meeting_access
+from app.services.storage import ObjectStorage, get_storage, meeting_prefix
 
 logger = get_logger(__name__)
 
@@ -128,12 +130,27 @@ async def update_meeting(
     summary="Delete a meeting",
 )
 async def delete_meeting(
-    meeting_id: uuid.UUID, db: DbSession, current_user: CurrentUser
+    meeting_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+    storage: _Annotated[ObjectStorage, Depends(get_storage)],
 ) -> Response:
     meeting = await authorize_meeting_access(db, meeting_id, current_user, AccessLevel.WRITE)
+    prefix = meeting_prefix(user_id=meeting.owner_id, meeting_id=meeting_id)
 
     await db.delete(meeting)
     await db.commit()
+
+    # Recordings and raw transcripts live in S3, outside the database cascade.
+    # Best effort after the commit: the database is the source of truth, and a
+    # storage hiccup must not resurrect a meeting the user deleted.
+    try:
+        removed = await storage.delete_prefix(prefix)
+        logger.info(
+            "meeting objects deleted", extra={"meeting_id": str(meeting_id), "objects": removed}
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("could not delete meeting objects", extra={"meeting_id": str(meeting_id)})
 
     logger.info(
         "meeting deleted",

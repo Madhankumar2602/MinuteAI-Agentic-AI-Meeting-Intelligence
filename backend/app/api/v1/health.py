@@ -23,6 +23,7 @@ from app.services import dynamo
 from app.services.job_store import JobStore, get_job_store
 from app.services.llm.base import LLMProvider
 from app.services.llm.factory import get_llm_provider
+from app.services.storage import ObjectStorage, get_storage
 
 logger = get_logger(__name__)
 
@@ -60,18 +61,21 @@ async def health_deps(
     response: Response,
     llm: Annotated[LLMProvider, Depends(get_llm_provider)],
     store: Annotated[JobStore, Depends(get_job_store)],
+    storage: Annotated[ObjectStorage, Depends(get_storage)],
 ) -> dict[str, Any]:
     pg_ok, pg_detail = await _check_postgres(db)
     ddb_ok, ddb_detail = await dynamo.check_health(store)
     llm_ok, llm_detail = await llm.health_check()
+    s3_ok, s3_detail = await storage.health_check()
 
     checks = {
         "postgres": {"healthy": pg_ok, "detail": pg_detail},
         "dynamodb": {"healthy": ddb_ok, "detail": ddb_detail},
+        "s3": {"healthy": s3_ok, "detail": s3_detail},
         # Keyed by provider name so the report stays accurate if it changes.
         llm.name: {"healthy": llm_ok, "detail": llm_detail},
     }
-    all_healthy = pg_ok and ddb_ok and llm_ok
+    all_healthy = pg_ok and ddb_ok and s3_ok and llm_ok
 
     # Only reported when this process runs the worker. A separately deployed
     # worker is monitored through its own logs, not through the API.

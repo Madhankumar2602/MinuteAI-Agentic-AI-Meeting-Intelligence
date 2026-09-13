@@ -50,7 +50,14 @@ from app.services.intelligence import (
     set_meeting_status,
 )
 from app.services.job_store import JobRecord, JobStore, JobStoreUnavailableError
-from app.services.llm.base import LLMProvider, LLMRateLimitError, LLMUnavailableError
+from app.services.llm.base import (
+    LLMProvider,
+    LLMRateLimitError,
+    LLMUnavailableError,
+    TranscriptionProvider,
+)
+from app.services.storage import ObjectStorage, StorageUnavailableError
+from app.services.transcription import media_needing_transcription, transcribe_meeting
 
 logger = get_logger(__name__)
 
@@ -62,6 +69,7 @@ RETRYABLE_ERRORS: tuple[type[BaseException], ...] = (
     LLMRateLimitError,
     LLMUnavailableError,
     JobStoreUnavailableError,
+    StorageUnavailableError,
     OperationalError,
 )
 
@@ -90,6 +98,8 @@ class ProcessingWorker:
         store: JobStore,
         session_factory: SessionFactory,
         llm_factory: Callable[[], LLMProvider],
+        storage: ObjectStorage,
+        transcriber_factory: Callable[[], TranscriptionProvider],
         concurrency: int = 2,
         poll_seconds: float = 2.0,
         lease_seconds: int = 120,
@@ -99,6 +109,8 @@ class ProcessingWorker:
         self.store = store
         self._session_factory = session_factory
         self._llm_factory = llm_factory
+        self.storage = storage
+        self._transcriber_factory = transcriber_factory
         self._concurrency = concurrency
         self._poll_seconds = poll_seconds
         self._lease_seconds = lease_seconds
@@ -261,26 +273,55 @@ class ProcessingWorker:
                         self.jobs_failed += 1
                     return
 
-                if not job.force and await is_result_current(db, meeting, model=llm.model):
-                    outcome = await result_counts(db, meeting_id)
-                    if await self.store.complete(
-                        job=job, worker_id=self.worker_id, result=outcome.as_job_result()
-                    ):
-                        self.jobs_completed += 1
-                        # Recovery set the meeting back to queued; the stored
-                        # results are complete, so restore the true state.
-                        await set_meeting_status(db, meeting_id, MeetingStatus.COMPLETED)
-                    return
-
+                transcribed = False
                 try:
+                    media = await media_needing_transcription(db, meeting_id)
+
+                    if (
+                        media is None
+                        and not job.force
+                        and await is_result_current(db, meeting, model=llm.model)
+                    ):
+                        outcome = await result_counts(db, meeting_id)
+                        if await self.store.complete(
+                            job=job, worker_id=self.worker_id, result=outcome.as_job_result()
+                        ):
+                            self.jobs_completed += 1
+                            # Recovery set the meeting back to queued; the stored
+                            # results are complete, so restore the true state.
+                            await set_meeting_status(db, meeting_id, MeetingStatus.COMPLETED)
+                        return
+
+                    # Stage 1 (recordings only): speech to text. Skipped when the
+                    # transcript already came from this exact object, so a retry
+                    # after an extraction failure does not transcribe twice.
+                    if media is not None:
+                        await self.store.add_event(
+                            job=job, worker_id=self.worker_id, event_type="transcription_started"
+                        )
+                        transcript = await transcribe_meeting(
+                            db,
+                            meeting_id=meeting_id,
+                            media=media,
+                            storage=self.storage,
+                            transcriber=self._transcriber_factory(),
+                        )
+                        transcribed = True
+                        await self.store.add_event(
+                            job=job,
+                            worker_id=self.worker_id,
+                            event_type="transcription_completed",
+                            words=transcript.word_count,
+                        )
+
+                    # Stage 2: the M2 extraction pipeline, unchanged.
                     outcome = await run_extraction(db, meeting_id=meeting_id, llm=llm)
                 except Exception as exc:
                     await self._handle_failure(db, job, meeting_id, exc, log_ctx)
                     return
 
-                if await self.store.complete(
-                    job=job, worker_id=self.worker_id, result=outcome.as_job_result()
-                ):
+                result = {**outcome.as_job_result(), "transcribed": transcribed}
+                if await self.store.complete(job=job, worker_id=self.worker_id, result=result):
                     self.jobs_completed += 1
                 else:
                     # Results are already committed and correct; only this
@@ -337,12 +378,15 @@ def build_worker() -> ProcessingWorker:
     """Worker wired to the application's real dependencies."""
     from app.db.session import AsyncSessionLocal
     from app.services.job_store import get_job_store
-    from app.services.llm.factory import get_llm_provider
+    from app.services.llm.factory import get_llm_provider, get_transcription_provider
+    from app.services.storage import get_storage
 
     return ProcessingWorker(
         store=get_job_store(),
         session_factory=AsyncSessionLocal,
         llm_factory=get_llm_provider,
+        storage=get_storage(),
+        transcriber_factory=get_transcription_provider,
         concurrency=settings.worker_concurrency,
         poll_seconds=settings.worker_poll_seconds,
         lease_seconds=settings.job_lease_seconds,

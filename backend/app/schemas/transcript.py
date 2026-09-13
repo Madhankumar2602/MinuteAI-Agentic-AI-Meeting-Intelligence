@@ -49,5 +49,9 @@ class TranscriptResponse(BaseModel):
     word_count: int
     language: str | None
     source: TranscriptSource
+    # Present only when source is "transcription" (M4).
+    media_id: uuid.UUID | None
+    transcription_model: str | None
+    duration_seconds: int | None
     created_at: datetime
     updated_at: datetime

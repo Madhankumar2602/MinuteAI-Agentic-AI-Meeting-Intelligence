@@ -66,6 +66,21 @@ class Settings(BaseSettings):
     # dynamodb:CreateTable, so this is turned off there.
     dynamodb_auto_create_tables: bool = True
 
+    # ---- Object storage: S3 (M4, ADR 0009) --------------------------------
+    s3_bucket: str = "minuteai-dev-media"
+    # Empty = real AWS S3. Locally, the RustFS container.
+    s3_endpoint_url: str = "http://localhost:9000"
+    # Host placed in presigned URLs for browsers. Empty = same as s3_endpoint_url.
+    s3_public_endpoint_url: str = ""
+    s3_region: str = "us-east-1"
+    # Empty = boto3's default credential chain (the IAM role in AWS).
+    s3_access_key_id: str = ""
+    s3_secret_access_key: SecretStr = SecretStr("")
+    s3_auto_create_bucket: bool = True
+    media_max_bytes: int = Field(default=200 * 1024 * 1024, ge=1024)
+    media_upload_url_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    gemini_transcription_model: str = "gemini-3.6-flash"
+
     # ---- Background processing (M3, ADR 0008) -----------------------------
     # Run the worker inside the API process. Set false to run it separately
     # with `python -m app.workers.processing`.

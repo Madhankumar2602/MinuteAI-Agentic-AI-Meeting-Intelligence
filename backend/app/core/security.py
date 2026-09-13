@@ -10,6 +10,7 @@ bcrypt 4.x and emits errors on Windows.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -31,6 +32,7 @@ _hasher = PasswordHasher(
 )
 
 TOKEN_TYPE_ACCESS = "access"
+TOKEN_TYPE_MEDIA_UPLOAD = "media_upload"
 
 
 def hash_password(password: str) -> str:
@@ -105,3 +107,76 @@ def decode_access_token(token: str) -> dict[str, Any]:
         raise UnauthorizedError("Could not validate credentials.")
 
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Media upload tokens (M4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MediaUploadClaims:
+    user_id: uuid.UUID
+    meeting_id: uuid.UUID
+    media_id: uuid.UUID
+    key: str
+    content_type: str
+    filename: str | None
+
+
+def create_media_upload_token(
+    *,
+    user_id: uuid.UUID,
+    meeting_id: uuid.UUID,
+    media_id: uuid.UUID,
+    key: str,
+    content_type: str,
+    filename: str | None,
+    expires_seconds: int,
+) -> str:
+    """Bind an issued upload URL to one user, meeting, key, and type.
+
+    A distinct ``type`` claim means an upload token can never be used as an
+    access token, or vice versa, even though both are signed with the same key.
+    """
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user_id),
+        "mid": str(meeting_id),
+        "med": str(media_id),
+        "key": key,
+        "ct": content_type,
+        "fn": filename,
+        "iat": now,
+        "exp": now + timedelta(seconds=expires_seconds),
+        "type": TOKEN_TYPE_MEDIA_UPLOAD,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_media_upload_token(token: str) -> MediaUploadClaims:
+    from app.core.exceptions import NotFoundError
+
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            options={"require": ["exp", "sub", "mid", "med", "key", "ct", "type"]},
+        )
+    except jwt.ExpiredSignatureError as exc:
+        raise NotFoundError(
+            "The upload link has expired. Request a new one.", code="upload_expired"
+        ) from exc
+    except jwt.InvalidTokenError as exc:
+        raise NotFoundError("Upload not found.") from exc
+    if payload.get("type") != TOKEN_TYPE_MEDIA_UPLOAD:
+        raise NotFoundError("Upload not found.")
+    return MediaUploadClaims(
+        user_id=uuid.UUID(payload["sub"]),
+        meeting_id=uuid.UUID(payload["mid"]),
+        media_id=uuid.UUID(payload["med"]),
+        key=payload["key"],
+        content_type=payload["ct"],
+        filename=payload.get("fn"),
+    )

@@ -39,6 +39,7 @@ from app.services.intelligence import is_result_current, require_transcript
 from app.services.job_store import JobStore, get_job_store
 from app.services.llm.base import LLMProvider
 from app.services.llm.factory import get_llm_provider
+from app.services.transcription import media_needing_transcription
 
 logger = get_logger(__name__)
 
@@ -84,6 +85,13 @@ async def upsert_transcript(
     transcript.word_count = len(payload.content.split())
     transcript.language = payload.language
     transcript.source = TranscriptSource.MANUAL
+    # A typed transcript replaces any transcribed one entirely, including its
+    # provenance; otherwise it would look as if it came from the recording.
+    transcript.media_id = None
+    transcript.media_etag = None
+    transcript.raw_s3_key = None
+    transcript.transcription_model = None
+    transcript.duration_seconds = None
 
     await db.commit()
     await db.refresh(transcript)
@@ -148,12 +156,19 @@ async def process(
     meeting = await authorize_meeting_access(db, meeting_id, current_user, AccessLevel.WRITE)
     # Validate synchronously what can be validated synchronously: a request
     # that can only fail should get a 409 now, not a job that fails later.
-    await require_transcript(db, meeting_id)
+    pending_recording = await media_needing_transcription(db, meeting_id)
+    if pending_recording is None:
+        await require_transcript(db, meeting_id)
 
     # While a job is active, always defer to it (create_job returns it) rather
     # than answering "cached" for a meeting that is visibly queued or running.
     active = meeting.status in (MeetingStatus.QUEUED, MeetingStatus.PROCESSING)
-    if not force and not active and await is_result_current(db, meeting, model=llm.model):
+    if (
+        not force
+        and not active
+        and pending_recording is None
+        and await is_result_current(db, meeting, model=llm.model)
+    ):
         if meeting.status != MeetingStatus.COMPLETED:
             # e.g. a forced re-run failed but the earlier results are still current.
             meeting.status = MeetingStatus.COMPLETED

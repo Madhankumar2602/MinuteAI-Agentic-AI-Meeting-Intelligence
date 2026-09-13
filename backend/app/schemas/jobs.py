@@ -19,13 +19,18 @@ class JobError(BaseModel):
 class JobEvent(BaseModel):
     at: str
     type: str = Field(
-        description="queued, started, retry_scheduled, lease_expired_requeued, completed, failed"
+        description=(
+            "queued, started, transcription_started, transcription_completed, "
+            "retry_scheduled, lease_expired_requeued, completed, failed"
+        )
     )
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
 class JobResult(BaseModel):
     cached: bool
+    # True when this run transcribed a recording before extraction (M4).
+    transcribed: bool = False
     decisions: int
     action_items: int
     participants: int

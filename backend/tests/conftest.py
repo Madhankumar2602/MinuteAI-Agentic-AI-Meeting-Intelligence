@@ -43,9 +43,10 @@ from app.db.session import get_db
 from app.main import app
 from app.services.dynamo import get_dynamodb_client
 from app.services.job_store import JobStore, get_job_store
-from app.services.llm.factory import get_llm_provider
+from app.services.llm.factory import get_llm_provider, get_transcription_provider
+from app.services.storage import ObjectStorage, _client, get_storage
 from app.workers.processing import ProcessingWorker
-from tests.fakes import FakeLLMProvider
+from tests.fakes import FakeLLMProvider, FakeTranscriber
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -149,6 +150,42 @@ def job_store(jobs_table_name: str, clock: FakeClock) -> Generator[JobStore, Non
             client.delete_item(TableName=jobs_table_name, Key={"pk": item["pk"]})
 
 
+# ---------------------------------------------------------------------------
+# S3-compatible object storage
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def storage_bucket() -> Generator[str, None, None]:
+    """A uniquely named bucket on the local object-storage container, per session."""
+    import asyncio
+
+    client = _client(settings.s3_endpoint_url)
+    name = f"minuteai-test-{uuid.uuid4().hex[:8]}"
+    storage = ObjectStorage(client=client, signing_client=client, bucket=name)
+    asyncio.run(storage.ensure_bucket(cors_origins=["http://localhost:5173"]))
+    yield name
+    asyncio.run(storage.delete_prefix(""))
+    client.delete_bucket(Bucket=name)
+
+
+@pytest.fixture
+def storage(storage_bucket: str) -> Generator[ObjectStorage, None, None]:
+    client = _client(settings.s3_endpoint_url)
+    yield ObjectStorage(client=client, signing_client=client, bucket=storage_bucket)
+    # Empty the bucket so objects never leak between tests.
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=storage_bucket):
+        keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+        if keys:
+            client.delete_objects(Bucket=storage_bucket, Delete={"Objects": keys, "Quiet": True})
+
+
+@pytest.fixture
+def fake_transcriber() -> FakeTranscriber:
+    return FakeTranscriber()
+
+
 @pytest.fixture
 def fake_llm() -> FakeLLMProvider:
     """The LLM seen by the app in tests. Tests may reconfigure it before calling."""
@@ -157,7 +194,11 @@ def fake_llm() -> FakeLLMProvider:
 
 @pytest.fixture
 def worker(
-    db_session: AsyncSession, job_store: JobStore, fake_llm: FakeLLMProvider
+    db_session: AsyncSession,
+    job_store: JobStore,
+    fake_llm: FakeLLMProvider,
+    storage: ObjectStorage,
+    fake_transcriber: FakeTranscriber,
 ) -> ProcessingWorker:
     @asynccontextmanager
     async def shared_session() -> AsyncIterator[AsyncSession]:
@@ -170,6 +211,8 @@ def worker(
         store=job_store,
         session_factory=shared_session,
         llm_factory=lambda: fake_llm,
+        storage=storage,
+        transcriber_factory=lambda: fake_transcriber,
         lease_seconds=60,
         retry_base_seconds=30,
         worker_id="test-worker",
@@ -178,7 +221,11 @@ def worker(
 
 @pytest.fixture
 async def client(
-    db_session: AsyncSession, fake_llm: FakeLLMProvider, job_store: JobStore
+    db_session: AsyncSession,
+    fake_llm: FakeLLMProvider,
+    job_store: JobStore,
+    storage: ObjectStorage,
+    fake_transcriber: FakeTranscriber,
 ) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client wired to the app: test DB session, fake LLM, test job table."""
 
@@ -188,6 +235,8 @@ async def client(
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
     app.dependency_overrides[get_job_store] = lambda: job_store
+    app.dependency_overrides[get_storage] = lambda: storage
+    app.dependency_overrides[get_transcription_provider] = lambda: fake_transcriber
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

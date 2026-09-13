@@ -40,6 +40,19 @@ class Transcript(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     char_count: Mapped[int] = mapped_column(Integer, nullable=False)
     word_count: Mapped[int] = mapped_column(Integer, nullable=False)
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Provenance for transcripts produced from a recording (M4). The etag pins the
+    # exact object that was transcribed: replacing the recording changes it, so
+    # the worker knows the transcript is out of date and transcribes again.
+    media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("meeting_media.id", ondelete="SET NULL"), nullable=True
+    )
+    media_etag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Full structured transcription output (segments, speakers, timestamps),
+    # archived in S3. This table keeps the plain-text working copy.
+    raw_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    transcription_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     source: Mapped[TranscriptSource] = mapped_column(
         Enum(
             TranscriptSource,

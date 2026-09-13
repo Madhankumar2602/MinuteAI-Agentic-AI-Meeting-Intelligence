@@ -8,11 +8,15 @@ Gemini for another provider means writing one new class that satisfies
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel
 
 from app.core.exceptions import BadGatewayError, ServiceUnavailableError
+
+if TYPE_CHECKING:
+    from app.schemas.transcription import TranscriptionResult
 
 # --------------------------------------------------------------------------
 # Errors
@@ -121,4 +125,22 @@ class LLMProvider(Protocol):
 
     async def health_check(self) -> tuple[bool, str]:
         """Return (healthy, detail). Must never raise."""
+        ...
+
+
+class TranscriptionProvider(Protocol):
+    """Speech-to-text contract (M4).
+
+    Separate from ``LLMProvider`` because the two are genuinely independent
+    choices: the fallback planned for evaluation (local faster-whisper) is a
+    transcriber but not a language model.
+    """
+
+    name: str
+    model: str
+
+    async def transcribe(
+        self, *, audio_path: Path, mime_type: str
+    ) -> StructuredResult[TranscriptionResult]:
+        """Return validated segments. Raises only the LLM*Error classes."""
         ...

@@ -111,3 +111,73 @@ class FakeLLMProvider:
 
     async def health_check(self) -> tuple[bool, str]:
         return self.healthy, "fake provider"
+
+
+# ---------------------------------------------------------------------------
+# Transcription (M4)
+# ---------------------------------------------------------------------------
+
+from app.schemas.transcription import TranscriptionResult, TranscriptSegment  # noqa: E402
+
+AUDIO_FIXTURE = FIXTURES / "audio" / "platform_sync.wav"
+
+# Smallest well-formed WAV header plus a little silence: enough for signature
+# sniffing and the wave module, small enough to upload in every test.
+TINY_WAV = (
+    b"RIFF"
+    + (36 + 1600).to_bytes(4, "little")
+    + b"WAVE"
+    + b"fmt "
+    + (16).to_bytes(4, "little")
+    + (1).to_bytes(2, "little")
+    + (1).to_bytes(2, "little")
+    + (8000).to_bytes(4, "little")
+    + (16000).to_bytes(4, "little")
+    + (2).to_bytes(2, "little")
+    + (16).to_bytes(2, "little")
+    + b"data"
+    + (1600).to_bytes(4, "little")
+    + b"\x00" * 1600
+)
+
+
+def platform_sync_transcription() -> TranscriptionResult:
+    """What transcribing the platform_sync recording should produce."""
+    segments = []
+    for i, line in enumerate(PLATFORM_SYNC.splitlines()):
+        speaker, _, text = line.partition(":")
+        segments.append(
+            TranscriptSegment(speaker=speaker.strip(), start_seconds=i * 5.0, text=text.strip())
+        )
+    return TranscriptionResult(language="en", segments=segments)
+
+
+class FakeTranscriber:
+    name = "fake"
+    model = "fake-transcribe-1"
+
+    def __init__(
+        self, result: TranscriptionResult | None = None, error: Exception | None = None
+    ) -> None:
+        self.result = result or platform_sync_transcription()
+        self.error = error
+        self.calls: list[dict] = []
+
+    async def transcribe(
+        self, *, audio_path, mime_type: str
+    ) -> StructuredResult[TranscriptionResult]:
+        # Record what reached the transcriber: proves the worker really
+        # downloaded the object from storage to a local file first.
+        self.calls.append(
+            {"mime_type": mime_type, "size": audio_path.stat().st_size, "suffix": audio_path.suffix}
+        )
+        if self.error is not None:
+            raise self.error
+        return StructuredResult(
+            data=TranscriptionResult.model_validate(self.result.model_dump()),
+            provider=self.name,
+            model=self.model,
+            usage=LLMUsage(input_tokens=4000, output_tokens=1300),
+            latency_ms=7,
+            attempts=1,
+        )

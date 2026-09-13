@@ -46,6 +46,14 @@ async def lifespan(app: FastAPI):
             # /health/deps will report the problem clearly.
             logger.exception("could not ensure the DynamoDB jobs table")
 
+    if settings.s3_auto_create_bucket:
+        from app.services.storage import get_storage
+
+        try:
+            await get_storage().ensure_bucket(cors_origins=settings.cors_origin_list)
+        except Exception:
+            logger.exception("could not ensure the S3 bucket")
+
     stop = asyncio.Event()
     worker_task: asyncio.Task[None] | None = None
     if settings.worker_embedded:

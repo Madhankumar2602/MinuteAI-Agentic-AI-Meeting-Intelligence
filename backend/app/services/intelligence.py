@@ -236,7 +236,8 @@ async def require_transcript(db: AsyncSession, meeting_id: uuid.UUID) -> Transcr
     transcript = await db.scalar(select(Transcript).where(Transcript.meeting_id == meeting_id))
     if transcript is None:
         raise ConflictError(
-            "Add a transcript before processing this meeting.", code="transcript_missing"
+            "Add a transcript or upload a recording before processing this meeting.",
+            code="transcript_missing",
         )
     return transcript
 
