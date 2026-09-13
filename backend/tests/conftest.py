@@ -2,24 +2,33 @@
 
 Isolation strategy
 ------------------
-Tests run against a dedicated database (``minuteai_test``), created by the
-Postgres container's init script. Schema is applied once per session by running
-the real Alembic migrations - so the migrations themselves are exercised on
-every test run, rather than being assumed correct.
+PostgreSQL: tests run against a dedicated database (``minuteai_test``), created
+by the Postgres container's init script. Schema is applied once per session by
+running the real Alembic migrations - so the migrations themselves are
+exercised on every test run, rather than being assumed correct.
 
 Each test then runs inside a transaction that is rolled back afterwards.
 ``join_transaction_mode="create_savepoint"`` means a ``session.commit()`` inside
 application code creates a SAVEPOINT instead of committing the outer
 transaction, so route handlers behave normally while the database still ends
 the test exactly as it started.
+
+DynamoDB: a uniquely named table on DynamoDB Local is created for the session
+and emptied after every test. Job-store tests therefore exercise real
+conditional writes, transactions, and index queries rather than a mock.
+
+Background work: the worker is never started implicitly (ASGITransport does not
+run the app's lifespan). Tests call ``worker.run_once()`` exactly when they want
+queued jobs to execute, which keeps them deterministic.
 """
 
 from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import AsyncGenerator, Generator
-from datetime import UTC, datetime
+from collections.abc import AsyncGenerator, AsyncIterator, Generator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from alembic import command
@@ -32,10 +41,30 @@ from app.core.security import hash_password
 from app.db.models.user import User
 from app.db.session import get_db
 from app.main import app
+from app.services.dynamo import get_dynamodb_client
+from app.services.job_store import JobStore, get_job_store
 from app.services.llm.factory import get_llm_provider
+from app.workers.processing import ProcessingWorker
 from tests.fakes import FakeLLMProvider
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def enable_app_logging(apply_migrations) -> None:
+    """Run every log call for real.
+
+    With the default WARNING level, ``logger.info(..., extra=...)`` returns
+    before building a LogRecord, so a bad ``extra`` key (e.g. the reserved
+    ``created``) raises only in production, where the level is INFO. That bug
+    shipped once; at DEBUG the tests build every record and would catch it.
+    """
+    import logging
+
+    app_logger = logging.getLogger("app")
+    app_logger.setLevel(logging.DEBUG)
+    # Guard against anything (e.g. a logging.config call) having disabled it.
+    assert not app_logger.disabled
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -71,6 +100,55 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
+# ---------------------------------------------------------------------------
+# DynamoDB job store
+# ---------------------------------------------------------------------------
+
+
+class FakeClock:
+    """Controllable time for lease expiry and retry back-off tests."""
+
+    def __init__(self) -> None:
+        self.now = datetime.now(UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
+
+
+@pytest.fixture(scope="session")
+def jobs_table_name() -> Generator[str, None, None]:
+    client = get_dynamodb_client()
+    name = f"minuteai_jobs_test_{uuid.uuid4().hex[:8]}"
+    store = JobStore(client=client, table_name=name, max_attempts=3, ttl_days=1)
+
+    import asyncio
+
+    asyncio.run(store.ensure_table())
+    yield name
+    client.delete_table(TableName=name)
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def job_store(jobs_table_name: str, clock: FakeClock) -> Generator[JobStore, None, None]:
+    client = get_dynamodb_client()
+    yield JobStore(
+        client=client, table_name=jobs_table_name, max_attempts=3, ttl_days=1, clock=clock
+    )
+    # Empty the table so jobs and meeting locks never leak between tests.
+    paginator = client.get_paginator("scan")
+    for page in paginator.paginate(TableName=jobs_table_name, ProjectionExpression="pk"):
+        for item in page.get("Items", []):
+            client.delete_item(TableName=jobs_table_name, Key={"pk": item["pk"]})
+
+
 @pytest.fixture
 def fake_llm() -> FakeLLMProvider:
     """The LLM seen by the app in tests. Tests may reconfigure it before calling."""
@@ -78,16 +156,38 @@ def fake_llm() -> FakeLLMProvider:
 
 
 @pytest.fixture
+def worker(
+    db_session: AsyncSession, job_store: JobStore, fake_llm: FakeLLMProvider
+) -> ProcessingWorker:
+    @asynccontextmanager
+    async def shared_session() -> AsyncIterator[AsyncSession]:
+        # The worker normally opens its own session per job. In tests it reuses
+        # the test session so its writes are visible to, and rolled back with,
+        # the rest of the test.
+        yield db_session
+
+    return ProcessingWorker(
+        store=job_store,
+        session_factory=shared_session,
+        llm_factory=lambda: fake_llm,
+        lease_seconds=60,
+        retry_base_seconds=30,
+        worker_id="test-worker",
+    )
+
+
+@pytest.fixture
 async def client(
-    db_session: AsyncSession, fake_llm: FakeLLMProvider
+    db_session: AsyncSession, fake_llm: FakeLLMProvider, job_store: JobStore
 ) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client wired to the app: test DB session and fake LLM injected."""
+    """HTTP client wired to the app: test DB session, fake LLM, test job table."""
 
     async def _override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
+    app.dependency_overrides[get_job_store] = lambda: job_store
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
@@ -173,3 +273,24 @@ def put_transcript(client: AsyncClient):
         return response.json()
 
     return _put
+
+
+@pytest.fixture
+def process_and_wait(client: AsyncClient, worker: ProcessingWorker):
+    """Submit processing, let the worker run it, return the stored intelligence.
+
+    Asserts the submission was accepted (202) or served from cache (200).
+    """
+
+    async def _run(meeting_id: str, headers: dict[str, str], force: bool = False) -> dict:
+        url = f"/api/v1/meetings/{meeting_id}/process" + ("?force=true" if force else "")
+        submitted = await client.post(url, headers=headers)
+        assert submitted.status_code in (200, 202), submitted.text
+        await worker.run_once()
+        intelligence = await client.get(
+            f"/api/v1/meetings/{meeting_id}/intelligence", headers=headers
+        )
+        assert intelligence.status_code == 200, intelligence.text
+        return {"submission": submitted.json(), **intelligence.json()}
+
+    return _run

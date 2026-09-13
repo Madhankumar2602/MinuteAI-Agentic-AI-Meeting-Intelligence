@@ -9,7 +9,7 @@ import hashlib
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy import select
 
 from app.core.deps import CurrentUser, DbSession
@@ -32,9 +32,11 @@ from app.schemas.intelligence import (
     ParticipantResponse,
     SummaryResponse,
 )
+from app.schemas.jobs import JobResponse, ProcessSubmissionResponse
 from app.schemas.transcript import TranscriptResponse, TranscriptUpsertRequest
 from app.services.authorization import AccessLevel, authorize_meeting_access
-from app.services.intelligence import process_meeting
+from app.services.intelligence import is_result_current, require_transcript
+from app.services.job_store import JobStore, get_job_store
 from app.services.llm.base import LLMProvider
 from app.services.llm.factory import get_llm_provider
 
@@ -64,9 +66,9 @@ async def upsert_transcript(
     """PUT, not POST: a meeting has exactly one transcript, and sending the same
     body twice leaves the same state (idempotent)."""
     meeting = await authorize_meeting_access(db, meeting_id, current_user, AccessLevel.WRITE)
-    if meeting.status == MeetingStatus.PROCESSING:
+    if meeting.status in (MeetingStatus.QUEUED, MeetingStatus.PROCESSING):
         raise ConflictError(
-            "The transcript cannot change while the meeting is being processed.",
+            "The transcript cannot change while the meeting is queued or being processed.",
             code="processing_in_progress",
         )
 
@@ -115,15 +117,19 @@ async def get_transcript(
 
 @router.post(
     "/process",
-    response_model=MeetingIntelligenceResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Extract summary, decisions, and action items with the LLM",
+    response_model=ProcessSubmissionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue AI extraction of summary, decisions, and action items",
+    responses={200: {"description": "Stored results are already current; nothing was queued."}},
 )
 async def process(
     meeting_id: uuid.UUID,
+    request: Request,
+    response: Response,
     db: DbSession,
     current_user: CurrentUser,
     llm: LLM,
+    store: Annotated[JobStore, Depends(get_job_store)],
     force: Annotated[
         bool,
         Query(
@@ -133,15 +139,44 @@ async def process(
             )
         ),
     ] = False,
-) -> MeetingIntelligenceResponse:
-    """Synchronous in M2 - the request waits for the LLM (typically 5-30 s).
+) -> ProcessSubmissionResponse:
+    """Returns immediately. Poll ``GET /api/v1/jobs/{job_id}`` for the outcome.
 
-    M3 turns this into a queued background job that returns 202 immediately.
+    Submitting again while a job for this meeting is still queued or running
+    returns that same job rather than starting a duplicate.
     """
     meeting = await authorize_meeting_access(db, meeting_id, current_user, AccessLevel.WRITE)
-    outcome = await process_meeting(db, meeting=meeting, llm=llm, force=force)
-    return await _load_intelligence(
-        db, meeting_id, cached=outcome.cached, warnings=outcome.warnings
+    # Validate synchronously what can be validated synchronously: a request
+    # that can only fail should get a 409 now, not a job that fails later.
+    await require_transcript(db, meeting_id)
+
+    # While a job is active, always defer to it (create_job returns it) rather
+    # than answering "cached" for a meeting that is visibly queued or running.
+    active = meeting.status in (MeetingStatus.QUEUED, MeetingStatus.PROCESSING)
+    if not force and not active and await is_result_current(db, meeting, model=llm.model):
+        if meeting.status != MeetingStatus.COMPLETED:
+            # e.g. a forced re-run failed but the earlier results are still current.
+            meeting.status = MeetingStatus.COMPLETED
+            await db.commit()
+        response.status_code = status.HTTP_200_OK
+        return ProcessSubmissionResponse(cached=True, meeting_status=meeting.status, job=None)
+
+    job, created = await store.create_job(
+        meeting_id=meeting_id, owner_id=current_user.id, force=force
+    )
+    if created:
+        meeting.status = MeetingStatus.QUEUED
+        await db.commit()
+        worker = getattr(request.app.state, "worker", None)
+        if worker is not None:
+            worker.notify()
+
+    logger.info(
+        "processing submitted",
+        extra={"meeting_id": str(meeting_id), "job_id": job.job_id, "job_created": created},
+    )
+    return ProcessSubmissionResponse(
+        cached=False, meeting_status=meeting.status, job=JobResponse.from_record(job)
     )
 
 

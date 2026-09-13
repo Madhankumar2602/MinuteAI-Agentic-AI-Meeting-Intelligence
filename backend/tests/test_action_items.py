@@ -9,7 +9,7 @@ from tests.fakes import PLATFORM_SYNC, platform_sync_extraction
 
 
 async def _processed_meeting(
-    client, make_user, auth_headers, create_meeting, put_transcript, user=None
+    client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait, user=None
 ):
     user = user or await make_user()
     headers = await auth_headers(user)
@@ -17,21 +17,21 @@ async def _processed_meeting(
         headers, title="Platform sync", meeting_date="2026-09-10T10:00:00+00:00"
     )
     await put_transcript(meeting["id"], headers, PLATFORM_SYNC)
-    body = (await client.post(f"/api/v1/meetings/{meeting['id']}/process", headers=headers)).json()
+    body = await process_and_wait(meeting["id"], headers)
     return user, headers, meeting, body
 
 
 async def test_list_action_items_returns_only_my_items_across_meetings(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     user, headers, _, _ = await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
     await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript, user=user
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait, user=user
     )
     await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )  # someone else
 
     response = await client.get("/api/v1/action-items", headers=headers)
@@ -43,7 +43,13 @@ async def test_list_action_items_returns_only_my_items_across_meetings(
 
 
 async def test_overdue_filter_uses_deadline_and_open_status(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    put_transcript,
+    process_and_wait,
+    fake_llm,
 ) -> None:
     today = datetime.now(UTC).date()
     extraction = platform_sync_extraction()
@@ -91,9 +97,7 @@ async def test_overdue_filter_uses_deadline_and_open_status(
     # Meeting dated today so these deadlines pass the plausibility window.
     meeting = await create_meeting(headers, meeting_date=datetime.now(UTC).isoformat())
     await put_transcript(meeting["id"], headers, PLATFORM_SYNC)
-    items = (
-        await client.post(f"/api/v1/meetings/{meeting['id']}/process", headers=headers)
-    ).json()["action_items"]
+    items = (await process_and_wait(meeting["id"], headers))["action_items"]
 
     done_id = next(i["id"] for i in items if i["task"] == "Also past, but done")
     await client.patch(f"/api/v1/action-items/{done_id}", json={"status": "done"}, headers=headers)
@@ -104,10 +108,10 @@ async def test_overdue_filter_uses_deadline_and_open_status(
 
 
 async def test_status_filter(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     _, headers, _, body = await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
     await client.patch(
         f"/api/v1/action-items/{body['action_items'][0]['id']}",
@@ -122,10 +126,10 @@ async def test_status_filter(
 
 
 async def test_patch_action_item_updates_fields_and_can_clear_deadline(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     _, headers, _, body = await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
     item_id = body["action_items"][0]["id"]
 
@@ -143,10 +147,10 @@ async def test_patch_action_item_updates_fields_and_can_clear_deadline(
 
 
 async def test_patch_action_item_rejects_null_for_required_fields(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     _, headers, _, body = await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
     item_id = body["action_items"][0]["id"]
 
@@ -158,10 +162,10 @@ async def test_patch_action_item_rejects_null_for_required_fields(
 
 
 async def test_other_user_cannot_list_or_modify_my_action_items_or_decisions(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     _, _, meeting, body = await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
     intruder = await make_user()
     intruder_headers = await auth_headers(intruder)
@@ -187,10 +191,10 @@ async def test_other_user_cannot_list_or_modify_my_action_items_or_decisions(
 
 
 async def test_patch_decision_status(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     _, headers, meeting, body = await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
     decision_id = body["decisions"][0]["id"]
 
@@ -207,10 +211,10 @@ async def test_patch_decision_status(
 
 
 async def test_deleting_a_meeting_cascades_to_its_intelligence(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     _, headers, meeting, body = await _processed_meeting(
-        client, make_user, auth_headers, create_meeting, put_transcript
+        client, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
 
     assert (

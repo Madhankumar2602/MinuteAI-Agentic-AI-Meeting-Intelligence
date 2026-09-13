@@ -22,10 +22,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import get_logger
 from app.db.models import (
     ActionItem,
@@ -40,7 +40,7 @@ from app.db.models import (
 )
 from app.schemas.extraction import MeetingExtraction
 from app.services.grounding import TranscriptIndex
-from app.services.llm.base import LLMError, LLMProvider
+from app.services.llm.base import LLMProvider
 from app.services.prompts import (
     EXTRACTION_PROMPT_VERSION,
     EXTRACTION_SYSTEM_INSTRUCTION,
@@ -212,61 +212,128 @@ def match_owner(owner_name: str | None, participants: dict[str, uuid.UUID]) -> u
 class ProcessingOutcome:
     meeting_id: uuid.UUID
     cached: bool
+    decisions: int
+    action_items: int
+    participants: int
     warnings: list[str]
 
+    def as_job_result(self) -> dict:
+        return {
+            "cached": self.cached,
+            "decisions": self.decisions,
+            "action_items": self.action_items,
+            "participants": self.participants,
+            "warnings": self.warnings,
+        }
 
-async def process_meeting(
-    db: AsyncSession,
-    *,
-    meeting: Meeting,
-    llm: LLMProvider,
-    force: bool = False,
-) -> ProcessingOutcome:
-    """Run extraction for an already-authorised meeting.
 
-    Idempotent: when the transcript, prompt version, and model are unchanged
-    since the last successful run, the stored result is returned without
-    calling the LLM, unless ``force`` is set.
-    """
-    meeting_id = meeting.id  # captured: ORM state is expired after a rollback
+class MeetingNotFoundError(NotFoundError):
+    code = "meeting_not_found"
+    message = "The meeting no longer exists."
 
+
+async def require_transcript(db: AsyncSession, meeting_id: uuid.UUID) -> Transcript:
     transcript = await db.scalar(select(Transcript).where(Transcript.meeting_id == meeting_id))
     if transcript is None:
         raise ConflictError(
             "Add a transcript before processing this meeting.", code="transcript_missing"
         )
+    return transcript
 
-    if meeting.status == MeetingStatus.PROCESSING and not force:
-        raise ConflictError(
-            "This meeting is already being processed.", code="processing_in_progress"
+
+async def is_result_current(db: AsyncSession, meeting: Meeting, *, model: str) -> bool:
+    """True when stored results already reflect the current transcript, prompt, and model.
+
+    Used by the API (answer immediately, queue nothing) and by the worker
+    (a recovered job whose previous attempt actually finished just before its
+    worker died is completed without a second LLM call).
+
+    Deliberately independent of ``meeting.status``. The summary and its
+    provenance are committed in the same transaction as every other result, so
+    a matching summary alone proves a complete, current run. Status is not a
+    reliable signal here: crash recovery resets it to ``queued`` precisely in
+    the case this check exists for.
+    """
+    row = (
+        await db.execute(
+            select(
+                MeetingSummary.transcript_sha256,
+                MeetingSummary.prompt_version,
+                MeetingSummary.model,
+                Transcript.content_sha256,
+            )
+            .join(Transcript, Transcript.meeting_id == MeetingSummary.meeting_id)
+            .where(MeetingSummary.meeting_id == meeting.id)
         )
-
-    existing = await db.scalar(
-        select(MeetingSummary).where(MeetingSummary.meeting_id == meeting_id)
+    ).one_or_none()
+    if row is None:
+        return False
+    summary_sha, prompt_version, summary_model, transcript_sha = row
+    return (
+        summary_sha == transcript_sha
+        and prompt_version == EXTRACTION_PROMPT_VERSION
+        and summary_model == model
     )
-    if (
-        not force
-        and existing is not None
-        and meeting.status == MeetingStatus.COMPLETED
-        and existing.transcript_sha256 == transcript.content_sha256
-        and existing.prompt_version == EXTRACTION_PROMPT_VERSION
-        and existing.model == llm.model
-    ):
-        logger.info(
-            "processing skipped, cached result is current", extra={"meeting_id": str(meeting_id)}
-        )
-        return ProcessingOutcome(meeting_id=meeting_id, cached=True, warnings=[])
 
-    # Read everything the LLM call needs BEFORE committing the status change.
+
+async def result_counts(db: AsyncSession, meeting_id: uuid.UUID) -> ProcessingOutcome:
+    """Describe already-stored results (for a cache hit)."""
+    decisions = await db.scalar(
+        select(func.count()).select_from(Decision).where(Decision.meeting_id == meeting_id)
+    )
+    action_items = await db.scalar(
+        select(func.count()).select_from(ActionItem).where(ActionItem.meeting_id == meeting_id)
+    )
+    participants = await db.scalar(
+        select(func.count())
+        .select_from(MeetingParticipant)
+        .where(MeetingParticipant.meeting_id == meeting_id)
+    )
+    return ProcessingOutcome(
+        meeting_id=meeting_id,
+        cached=True,
+        decisions=decisions or 0,
+        action_items=action_items or 0,
+        participants=participants or 0,
+        warnings=[],
+    )
+
+
+async def set_meeting_status(
+    db: AsyncSession, meeting_id: uuid.UUID, status: MeetingStatus
+) -> None:
+    # Core UPDATE: safe to call after a rollback, when ORM instances are expired
+    # and touching them in async code would raise.
+    await db.execute(update(Meeting).where(Meeting.id == meeting_id).values(status=status))
+    await db.commit()
+
+
+async def run_extraction(
+    db: AsyncSession, *, meeting_id: uuid.UUID, llm: LLMProvider
+) -> ProcessingOutcome:
+    """Run the LLM pipeline for one meeting and store the results.
+
+    Called by the background worker, which has already won exclusive ownership
+    of the meeting's job (ADR 0008), so no in-progress check is needed here.
+
+    On failure the transaction is rolled back and the exception propagates.
+    Deciding the resulting meeting status is the caller's job, because only the
+    caller knows whether the failure will be retried (QUEUED) or is final
+    (FAILED).
+    """
+    meeting = await db.scalar(select(Meeting).where(Meeting.id == meeting_id))
+    if meeting is None:
+        raise MeetingNotFoundError()
+    transcript = await require_transcript(db, meeting_id)
+
+    # Read what the LLM call needs BEFORE committing: committing releases the
+    # pooled connection for the whole (tens of seconds) LLM wait.
     title, meeting_date = meeting.title, meeting.meeting_date
     content, content_sha = transcript.content, transcript.content_sha256
 
-    # Commit PROCESSING first. This releases the pooled DB connection for the
-    # duration of the LLM call (which can take tens of seconds), and makes the
-    # in-progress state visible to other requests.
     meeting.status = MeetingStatus.PROCESSING
     await db.commit()
-    logger.info("processing started", extra={"meeting_id": str(meeting_id), "force": force})
+    logger.info("extraction started", extra={"meeting_id": str(meeting_id)})
 
     try:
         result = await llm.generate_structured(
@@ -298,26 +365,14 @@ async def process_meeting(
             update(Meeting).where(Meeting.id == meeting_id).values(status=MeetingStatus.COMPLETED)
         )
         await db.commit()
-    except Exception as exc:
+    except BaseException:
+        # BaseException, not Exception: a cancelled task (worker shutdown) must
+        # also roll back rather than leave a half-written transaction open.
         await db.rollback()
-        # A Core UPDATE rather than touching the ORM object: after rollback the
-        # instance is expired, and reading it in async code would raise.
-        await db.execute(
-            update(Meeting).where(Meeting.id == meeting_id).values(status=MeetingStatus.FAILED)
-        )
-        await db.commit()
-        logger.warning(
-            "processing failed",
-            extra={
-                "meeting_id": str(meeting_id),
-                "error": type(exc).__name__,
-                "llm_error": isinstance(exc, LLMError),
-            },
-        )
         raise
 
     logger.info(
-        "processing completed",
+        "extraction completed",
         extra={
             "meeting_id": str(meeting_id),
             "decisions": len(normalised.decisions),
@@ -326,7 +381,14 @@ async def process_meeting(
             "warnings": len(normalised.warnings),
         },
     )
-    return ProcessingOutcome(meeting_id=meeting_id, cached=False, warnings=normalised.warnings)
+    return ProcessingOutcome(
+        meeting_id=meeting_id,
+        cached=False,
+        decisions=len(normalised.decisions),
+        action_items=len(normalised.action_items),
+        participants=len(normalised.participants),
+        warnings=normalised.warnings,
+    )
 
 
 async def _replace_results(

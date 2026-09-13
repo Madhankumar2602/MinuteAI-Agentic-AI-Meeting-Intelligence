@@ -59,6 +59,28 @@ class Settings(BaseSettings):
     aws_access_key_id: str = "local"
     aws_secret_access_key: str = "local"
 
+    # Name of the processing-jobs table. Tests use a separate table.
+    dynamodb_jobs_table: str = "minuteai_processing_jobs"
+    # Create the table on start-up if missing. Convenient locally; in AWS (M10)
+    # tables are created by infrastructure code and the app role is not granted
+    # dynamodb:CreateTable, so this is turned off there.
+    dynamodb_auto_create_tables: bool = True
+
+    # ---- Background processing (M3, ADR 0008) -----------------------------
+    # Run the worker inside the API process. Set false to run it separately
+    # with `python -m app.workers.processing`.
+    worker_embedded: bool = True
+    worker_concurrency: int = Field(default=2, ge=1, le=16)
+    worker_poll_seconds: float = Field(default=2.0, gt=0)
+    # A claimed job is owned for this long; the worker renews it while running.
+    # If the worker dies, the job becomes claimable again once the lease lapses.
+    job_lease_seconds: int = Field(default=120, ge=10)
+    job_max_attempts: int = Field(default=3, ge=1, le=10)
+    # Job-level retry delay (base * 4^(attempt-1)) for transient provider errors
+    # that outlasted the LLM client's own short retries.
+    job_retry_base_seconds: int = Field(default=30, ge=1)
+    job_ttl_days: int = Field(default=30, ge=1)
+
     # ---- Authentication ---------------------------------------------------
     jwt_secret: str = Field(min_length=32)
     jwt_algorithm: str = "HS256"

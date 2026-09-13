@@ -12,15 +12,17 @@ this project, a handful of small calls per request.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
-from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.services.job_store import JobStore
 
 logger = get_logger(__name__)
 
@@ -47,12 +49,15 @@ def get_dynamodb_client() -> Any:
     )
 
 
-async def check_health() -> tuple[bool, str]:
-    """Return (healthy, detail). Never raises."""
+async def check_health(store: JobStore) -> tuple[bool, str]:
+    """Return (healthy, detail). Never raises.
+
+    Checks the jobs table specifically, not just connectivity: a reachable
+    DynamoDB without the table cannot accept a single processing job.
+    """
     try:
-        client = get_dynamodb_client()
-        result = await run_in_threadpool(lambda: client.list_tables(Limit=1))
-        return True, f"reachable ({len(result.get('TableNames', []))} table(s))"
+        status = await store.table_status()
+        return status == "ACTIVE", f"reachable (jobs table {status})"
     except (ClientError, BotoCoreError) as exc:
         logger.warning("dynamodb health check failed", extra={"error": str(exc)})
         return False, type(exc).__name__

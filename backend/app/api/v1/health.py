@@ -13,13 +13,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.deps import DbSession
 from app.core.logging import get_logger
 from app.services import dynamo
+from app.services.job_store import JobStore, get_job_store
 from app.services.llm.base import LLMProvider
 from app.services.llm.factory import get_llm_provider
 
@@ -55,11 +56,13 @@ async def _check_postgres(db: DbSession) -> tuple[bool, str]:
 @router.get("/health/deps", summary="Readiness probe - checks backing services")
 async def health_deps(
     db: DbSession,
+    request: Request,
     response: Response,
     llm: Annotated[LLMProvider, Depends(get_llm_provider)],
+    store: Annotated[JobStore, Depends(get_job_store)],
 ) -> dict[str, Any]:
     pg_ok, pg_detail = await _check_postgres(db)
-    ddb_ok, ddb_detail = await dynamo.check_health()
+    ddb_ok, ddb_detail = await dynamo.check_health(store)
     llm_ok, llm_detail = await llm.health_check()
 
     checks = {
@@ -69,6 +72,13 @@ async def health_deps(
         llm.name: {"healthy": llm_ok, "detail": llm_detail},
     }
     all_healthy = pg_ok and ddb_ok and llm_ok
+
+    # Only reported when this process runs the worker. A separately deployed
+    # worker is monitored through its own logs, not through the API.
+    worker = getattr(request.app.state, "worker", None)
+    if worker is not None:
+        checks["worker"] = worker.health()
+        all_healthy = all_healthy and checks["worker"]["healthy"]
 
     if not all_healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

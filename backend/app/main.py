@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -33,7 +34,30 @@ async def lifespan(app: FastAPI):
         "application starting",
         extra={"environment": settings.app_env, "port": settings.app_port},
     )
+
+    from app.services.job_store import get_job_store
+    from app.workers.processing import build_worker
+
+    if settings.dynamodb_auto_create_tables:
+        try:
+            await get_job_store().ensure_table()
+        except Exception:
+            # Start anyway: CRUD endpoints work without DynamoDB, and
+            # /health/deps will report the problem clearly.
+            logger.exception("could not ensure the DynamoDB jobs table")
+
+    stop = asyncio.Event()
+    worker_task: asyncio.Task[None] | None = None
+    if settings.worker_embedded:
+        worker = build_worker()
+        app.state.worker = worker
+        worker_task = asyncio.create_task(worker.run_forever(stop), name="processing-worker")
+
     yield
+
+    stop.set()
+    if worker_task is not None:
+        await worker_task
     # Closing the pool on shutdown avoids asyncpg warning about connections
     # garbage-collected while still open.
     await engine.dispose()

@@ -1,13 +1,17 @@
-"""Transcript input and the processing pipeline, end to end through the API.
+"""Transcript input and the extraction pipeline, end to end through the API.
 
 The LLM is the deterministic ``FakeLLMProvider`` (see tests/fakes.py); every
-other layer - routes, authorization, normalisation, grounding, persistence,
-status transitions - is the real code against the real test database.
+other layer - routes, authorization, job queue, worker, normalisation,
+grounding, persistence, status transitions - is the real code against the real
+test database and DynamoDB Local.
+
+Job lifecycle specifics (retries, leases, duplicate submissions) live in
+test_jobs.py; this file is about what processing produces.
 """
 
 from httpx import AsyncClient
 
-from app.services.llm.base import LLMRateLimitError, LLMResponseError
+from app.services.llm.base import LLMResponseError
 from tests.fakes import PLATFORM_SYNC
 
 
@@ -92,24 +96,27 @@ async def test_get_transcript_when_none_exists_is_404(
 
 
 # ---------------------------------------------------------------------------
-# Processing: success
+# Processing: results
 # ---------------------------------------------------------------------------
 
 
-async def test_process_extracts_and_persists_everything(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
+async def test_processing_extracts_and_persists_everything(
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    put_transcript,
+    process_and_wait,
+    fake_llm,
 ) -> None:
     _, headers, meeting = await _meeting_with_transcript(
         make_user, auth_headers, create_meeting, put_transcript
     )
 
-    response = await client.post(f"/api/v1/meetings/{meeting['id']}/process", headers=headers)
-    assert response.status_code == 200, response.text
-    body = response.json()
+    body = await process_and_wait(meeting["id"], headers)
 
+    assert body["submission"]["cached"] is False
     assert body["status"] == "completed"
-    assert body["cached"] is False
-    assert body["warnings"] == []
     assert len(fake_llm.calls) == 1
 
     # The prompt carried the meeting date and fenced the transcript.
@@ -135,7 +142,6 @@ async def test_process_extracts_and_persists_everything(
 
     items = body["action_items"]
     assert [i["owner_name"] for i in items] == ["Karthik", "Meera", "Arjun"]
-    # Every owner was linked to a participant row.
     participant_ids = {p["id"] for p in body["participants"]}
     assert all(i["owner_participant_id"] in participant_ids for i in items)
     assert items[0]["deadline"] == "2026-09-16"
@@ -145,77 +151,89 @@ async def test_process_extracts_and_persists_everything(
 
 
 async def test_results_are_readable_through_individual_endpoints(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript
+    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, process_and_wait
 ) -> None:
     _, headers, meeting = await _meeting_with_transcript(
         make_user, auth_headers, create_meeting, put_transcript
     )
-    await client.post(f"/api/v1/meetings/{meeting['id']}/process", headers=headers)
+    await process_and_wait(meeting["id"], headers)
     base = f"/api/v1/meetings/{meeting['id']}"
 
     assert (await client.get(f"{base}/summary", headers=headers)).status_code == 200
     assert len((await client.get(f"{base}/decisions", headers=headers)).json()) == 2
     assert len((await client.get(f"{base}/action-items", headers=headers)).json()) == 3
     assert len((await client.get(f"{base}/participants", headers=headers)).json()) == 4
-    assert (await client.get(f"{base}/intelligence", headers=headers)).json()[
-        "status"
-    ] == "completed"
     assert (await client.get(base, headers=headers)).json()["status"] == "completed"
 
 
-async def test_reprocessing_unchanged_transcript_uses_cache(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
+async def test_unchanged_transcript_is_served_from_cache_without_a_job(
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    put_transcript,
+    process_and_wait,
+    fake_llm,
 ) -> None:
     _, headers, meeting = await _meeting_with_transcript(
         make_user, auth_headers, create_meeting, put_transcript
     )
-    url = f"/api/v1/meetings/{meeting['id']}/process"
+    await process_and_wait(meeting["id"], headers)
 
-    await client.post(url, headers=headers)
-    second = await client.post(url, headers=headers)
+    second = await client.post(f"/api/v1/meetings/{meeting['id']}/process", headers=headers)
 
     assert second.status_code == 200
-    assert second.json()["cached"] is True
+    assert second.json() == {"cached": True, "meeting_status": "completed", "job": None}
     assert len(fake_llm.calls) == 1  # no second paid LLM call
-    assert len(second.json()["action_items"]) == 3
 
 
 async def test_force_reprocesses_and_resets_manual_changes(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    put_transcript,
+    process_and_wait,
+    fake_llm,
 ) -> None:
     _, headers, meeting = await _meeting_with_transcript(
         make_user, auth_headers, create_meeting, put_transcript
     )
-    url = f"/api/v1/meetings/{meeting['id']}/process"
-    first = (await client.post(url, headers=headers)).json()
-
+    first = await process_and_wait(meeting["id"], headers)
     item_id = first["action_items"][0]["id"]
     await client.patch(f"/api/v1/action-items/{item_id}", json={"status": "done"}, headers=headers)
 
-    forced = await client.post(f"{url}?force=true", headers=headers)
-    assert forced.json()["cached"] is False
+    forced = await process_and_wait(meeting["id"], headers, force=True)
+
+    assert forced["submission"]["job"]["force"] is True
     assert len(fake_llm.calls) == 2
     # Documented behaviour: results are re-derived, so no duplicates and the
     # manual status change is reset.
-    assert len(forced.json()["action_items"]) == 3
-    assert all(i["status"] == "pending" for i in forced.json()["action_items"])
+    assert len(forced["action_items"]) == 3
+    assert all(i["status"] == "pending" for i in forced["action_items"])
 
 
 async def test_changed_transcript_marks_summary_stale_then_reprocesses(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    put_transcript,
+    process_and_wait,
+    fake_llm,
 ) -> None:
     _, headers, meeting = await _meeting_with_transcript(
         make_user, auth_headers, create_meeting, put_transcript
     )
     url = f"/api/v1/meetings/{meeting['id']}"
-    await client.post(f"{url}/process", headers=headers)
+    await process_and_wait(meeting["id"], headers)
 
     await put_transcript(meeting["id"], headers, PLATFORM_SYNC + "\nPriya: One more thing.")
     assert (await client.get(f"{url}/summary", headers=headers)).json()["is_stale"] is True
 
-    rerun = await client.post(f"{url}/process", headers=headers)
-    assert rerun.json()["cached"] is False  # transcript changed, so no cache hit
-    assert rerun.json()["summary"]["is_stale"] is False
+    rerun = await process_and_wait(meeting["id"], headers)
+    assert rerun["submission"]["cached"] is False  # transcript changed, so no cache hit
+    assert rerun["summary"]["is_stale"] is False
     assert len(fake_llm.calls) == 2
 
 
@@ -224,8 +242,8 @@ async def test_changed_transcript_marks_summary_stale_then_reprocesses(
 # ---------------------------------------------------------------------------
 
 
-async def test_process_without_transcript_is_409(
-    client: AsyncClient, make_user, auth_headers, create_meeting, fake_llm
+async def test_process_without_transcript_is_409_and_queues_nothing(
+    client: AsyncClient, make_user, auth_headers, create_meeting, job_store, fake_llm
 ) -> None:
     user = await make_user()
     headers = await auth_headers(user)
@@ -234,63 +252,32 @@ async def test_process_without_transcript_is_409(
     response = await client.post(f"/api/v1/meetings/{meeting['id']}/process", headers=headers)
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "transcript_missing"
+    assert await job_store.list_jobs_for_meeting(meeting["id"]) == []
     assert fake_llm.calls == []
 
 
-async def test_llm_rate_limit_returns_503_and_marks_meeting_failed(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
+async def test_failed_reprocess_keeps_previous_results_intact(
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    put_transcript,
+    process_and_wait,
+    worker,
+    fake_llm,
 ) -> None:
-    _, headers, meeting = await _meeting_with_transcript(
-        make_user, auth_headers, create_meeting, put_transcript
-    )
-    fake_llm.error = LLMRateLimitError()
-
-    response = await client.post(f"/api/v1/meetings/{meeting['id']}/process", headers=headers)
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "llm_rate_limited"
-
-    detail = await client.get(f"/api/v1/meetings/{meeting['id']}", headers=headers)
-    assert detail.json()["status"] == "failed"
-    # Nothing half-written.
-    assert (
-        await client.get(f"/api/v1/meetings/{meeting['id']}/action-items", headers=headers)
-    ).json() == []
-
-
-async def test_invalid_llm_response_returns_502_and_meeting_can_be_retried(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
-) -> None:
-    _, headers, meeting = await _meeting_with_transcript(
-        make_user, auth_headers, create_meeting, put_transcript
-    )
-    url = f"/api/v1/meetings/{meeting['id']}/process"
-
-    fake_llm.error = LLMResponseError()
-    failed = await client.post(url, headers=headers)
-    assert failed.status_code == 502
-    assert failed.json()["error"]["code"] == "llm_invalid_response"
-
-    # Recoverable: once the provider behaves, a plain retry succeeds.
-    fake_llm.error = None
-    retried = await client.post(url, headers=headers)
-    assert retried.status_code == 200
-    assert retried.json()["status"] == "completed"
-
-
-async def test_failed_reprocess_keeps_nothing_partial(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
-) -> None:
-    """A failure mid-rerun must roll back, not leave a meeting with half its old items deleted."""
+    """A failed re-run must roll back, not leave a meeting with half its old items deleted."""
     _, headers, meeting = await _meeting_with_transcript(
         make_user, auth_headers, create_meeting, put_transcript
     )
     url = f"/api/v1/meetings/{meeting['id']}"
-    await client.post(f"{url}/process", headers=headers)
+    await process_and_wait(meeting["id"], headers)
 
     fake_llm.error = LLMResponseError()
     await client.post(f"{url}/process?force=true", headers=headers)
+    await worker.run_once()
 
-    # The LLM failed before any delete ran, so the previous results survive.
+    assert (await client.get(url, headers=headers)).json()["status"] == "failed"
     assert len((await client.get(f"{url}/action-items", headers=headers)).json()) == 3
 
 
@@ -300,7 +287,13 @@ async def test_failed_reprocess_keeps_nothing_partial(
 
 
 async def test_other_user_cannot_touch_transcript_processing_or_results(
-    client: AsyncClient, make_user, auth_headers, create_meeting, put_transcript, fake_llm
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    put_transcript,
+    job_store,
+    fake_llm,
 ) -> None:
     _, _, meeting = await _meeting_with_transcript(
         make_user, auth_headers, create_meeting, put_transcript
@@ -322,7 +315,9 @@ async def test_other_user_cannot_touch_transcript_processing_or_results(
         await client.get(f"{base}/action-items", headers=intruder_headers),
         await client.get(f"{base}/participants", headers=intruder_headers),
         await client.get(f"{base}/intelligence", headers=intruder_headers),
+        await client.get(f"{base}/jobs", headers=intruder_headers),
     ]
     assert [r.status_code for r in attempts] == [404] * len(attempts)
-    # And the intruder's attempt to process never reached the LLM.
+    # The intruder's submission never created a job, let alone reached the LLM.
+    assert await job_store.list_jobs_for_meeting(meeting["id"]) == []
     assert fake_llm.calls == []
