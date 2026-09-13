@@ -28,7 +28,10 @@ from app.db.base import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: the default (True) switches off every
+    # logger created before migrations run. Running migrations in-process (the
+    # test suite does) would otherwise silently disable all application logging.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option(
     "sqlalchemy.url",
