@@ -42,6 +42,8 @@ SENSITIVE_KEYS = frozenset(
         "jwt_secret",
         "secret",
         "api_key",
+        "gemini_api_key",
+        "google_api_key",
         "groq_api_key",
         "aws_secret_access_key",
     }

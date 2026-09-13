@@ -188,3 +188,4 @@ See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 | [0003](adr/0003-async-sqlalchemy.md) | Async SQLAlchemy with asyncpg |
 | [0004](adr/0004-ownership-only-authorization-in-m1.md) | Ownership-only authorization, sharing as extension point |
 | [0005](adr/0005-argon2-over-bcrypt.md) | Argon2id via argon2-cffi |
+| [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM and transcription provider |

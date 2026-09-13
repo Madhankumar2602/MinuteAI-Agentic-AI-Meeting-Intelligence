@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-09-12
 **Current milestone:** M1 — Foundation ✅ **COMPLETE**
-**Next milestone:** M2 — Text-first AI intelligence 🔴 **BLOCKED — needs `GROQ_API_KEY`**
+**Next milestone:** M2 — Text-first AI intelligence 🔴 **BLOCKED — needs `GEMINI_API_KEY`**
 
 ---
 
@@ -13,7 +13,7 @@
 | **M1** | Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD | ✅ Complete |
 | M2 | Text-first AI intelligence (summary / decisions / action items) | 🔴 Blocked — credential |
 | M3 | Async processing + DynamoDB job state | ⬜ Not started |
-| M4 | Audio upload + S3 + transcription | 🔴 Blocked — AWS + Groq |
+| M4 | Audio upload + S3 + transcription | 🔴 Blocked — AWS + Gemini |
 | M5 | React frontend | ⬜ Not started |
 | M6 | Embeddings + pgvector | ⬜ Not started (dependency verified ✅) |
 | M7 | Cross-meeting RAG | ⬜ Not started |
@@ -138,6 +138,7 @@ of another user's meeting, and the target record is verified unchanged.
 | [0003](adr/0003-async-sqlalchemy.md) | Async SQLAlchemy with asyncpg |
 | [0004](adr/0004-ownership-only-authorization-in-m1.md) | Ownership-only authorization in M1 |
 | [0005](adr/0005-argon2-over-bcrypt.md) | Argon2id via argon2-cffi |
+| [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM and transcription provider (replaces Groq) |
 
 Smaller decisions recorded inline in `docs/architecture.md`: VARCHAR+CHECK
 instead of native PostgreSQL enums; UUID primary keys; single root `.env`;
@@ -156,22 +157,32 @@ connected.
 
 M2 is the first milestone that calls an external AI provider. Everything that
 can be built without the key has been built; the pipeline itself cannot be
-implemented honestly without one (no simulated LLM responses — project Rule 5).
+implemented honestly without one (no simulated LLM responses).
 
-**What is needed:** a Groq API key.
+**Provider:** Google Gemini (ADR 0006 — switched from Groq on 2026-09-13,
+before any provider code existed).
 
-1. **Obtain:** sign in at <https://console.groq.com> → *API Keys* → *Create API
-   Key*. The free tier is sufficient for development.
-2. **Place it:** add to `C:\dev\minuteai\.env`
+**What is needed:** a Gemini API key.
+
+1. **Obtain:** sign in to Google AI Studio at <https://aistudio.google.com> →
+   *Get API key* → *Create API key*. The free tier is sufficient for
+   development.
+2. **Place it:** add to `.env` in the project root
    ```
-   GROQ_API_KEY=gsk_your_key_here
+   GEMINI_API_KEY=your_key_here
    ```
-   `.env` is git-ignored; the key will not be committed.
-3. **Verify:** after M2's LLM service exists, `GET /health/deps` will include a
-   `groq` check.
+   `.env` is git-ignored; the key will not be committed, and the logger
+   redacts `gemini_api_key` if it ever appears in structured log context.
+3. **Verify:** once M2's LLM service exists, `GET /health/deps` will include a
+   `gemini` check, and the available models for the key will be listed so
+   `GEMINI_MODEL` can be set to one that actually exists.
 
-**What proceeds automatically once the key is present:** LLM service interface
-with Groq as the first implementation, Pydantic schemas for structured
-extraction, `transcripts` / `summaries` / `decisions` / `action_items` tables
-and migration, the transcript → summary/decisions/actions pipeline, the
-processing endpoint, and tests.
+**Data note:** free-tier API content may be used by Google to improve its
+products. Use synthetic or consented meeting transcripts during development.
+
+**What proceeds automatically once the key is present:** provider-neutral
+`LLMService` interface with Gemini as its first implementation, Pydantic
+schemas for structured extraction (sent to Gemini as a response schema and
+re-validated locally), `transcripts` / `summaries` / `decisions` /
+`action_items` tables and migration, the transcript → summary/decisions/actions
+pipeline, the processing endpoint, and tests.

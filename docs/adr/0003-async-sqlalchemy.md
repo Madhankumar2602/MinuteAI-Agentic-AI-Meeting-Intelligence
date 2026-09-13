@@ -12,7 +12,7 @@ synchronous and an asynchronous API. A choice was required before the driver
 dependency could be pinned.
 
 MinuteAI's later milestones are dominated by I/O that is *not* the database:
-Groq LLM calls (seconds), transcription (tens of seconds), embedding requests,
+LLM API calls (seconds), transcription (tens of seconds), embedding requests,
 and in M8 an agent loop that interleaves several tool calls with LLM calls.
 While any of those waits, the process should be serving other requests.
 

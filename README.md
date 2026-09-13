@@ -21,7 +21,7 @@ semantic Q&A, and proactive follow-up detection.
 | Vector search | pgvector (inside PostgreSQL) | Keeps ACL filtering and vectors in one transactional store — [ADR 0002](docs/adr/0002-pgvector-over-dedicated-vector-db.md) |
 | Workflow state | DynamoDB | Schema-fluid job state with TTL expiry — [ADR 0001](docs/adr/0001-polyglot-persistence.md) |
 | Object storage | Amazon S3 *(M4)* | Audio, video, transcripts, exports |
-| LLM + transcription | Groq *(M2)* | One provider behind a swappable interface |
+| LLM + transcription | Google Gemini *(M2)* | One provider behind a swappable interface — [ADR 0006](docs/adr/0006-gemini-as-initial-llm-provider.md) |
 | Auth | JWT + Argon2id | [ADR 0005](docs/adr/0005-argon2-over-bcrypt.md) |
 
 Full detail: [docs/architecture.md](docs/architecture.md).
@@ -237,7 +237,7 @@ minuteai/
 ## Milestones
 
 - **M1** ✅ Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD
-- **M2** 🔴 Meeting intelligence (summary / decisions / action items) — *needs `GROQ_API_KEY`*
+- **M2** 🔴 Meeting intelligence (summary / decisions / action items) — *needs `GEMINI_API_KEY`*
 - M3 Async pipeline + DynamoDB job state
 - M4 Audio upload + S3 + transcription
 - M5 React UI
