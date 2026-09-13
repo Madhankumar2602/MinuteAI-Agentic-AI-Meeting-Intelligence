@@ -32,6 +32,8 @@ from app.core.security import hash_password
 from app.db.models.user import User
 from app.db.session import get_db
 from app.main import app
+from app.services.llm.factory import get_llm_provider
+from tests.fakes import FakeLLMProvider
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -70,13 +72,22 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client wired to the app, with the DB dependency pointed at the test session."""
+def fake_llm() -> FakeLLMProvider:
+    """The LLM seen by the app in tests. Tests may reconfigure it before calling."""
+    return FakeLLMProvider()
+
+
+@pytest.fixture
+async def client(
+    db_session: AsyncSession, fake_llm: FakeLLMProvider
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client wired to the app: test DB session and fake LLM injected."""
 
     async def _override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_llm_provider] = lambda: fake_llm
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
@@ -136,3 +147,29 @@ def meeting_payload():
         return base
 
     return _payload
+
+
+@pytest.fixture
+def create_meeting(client: AsyncClient, meeting_payload):
+    async def _create(headers: dict[str, str], **overrides) -> dict:
+        response = await client.post(
+            "/api/v1/meetings", json=meeting_payload(**overrides), headers=headers
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    return _create
+
+
+@pytest.fixture
+def put_transcript(client: AsyncClient):
+    async def _put(meeting_id: str, headers: dict[str, str], content: str) -> dict:
+        response = await client.put(
+            f"/api/v1/meetings/{meeting_id}/transcript",
+            json={"content": content, "language": "en"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    return _put

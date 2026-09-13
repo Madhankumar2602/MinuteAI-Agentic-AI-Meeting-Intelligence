@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
+from app.db.models.action_item import ActionItem
+from app.db.models.decision import Decision
 from app.db.models.meeting import Meeting
 from app.db.models.user import User
 
@@ -71,3 +73,42 @@ async def authorize_meeting_access(
         raise NotFoundError("Meeting not found.")
 
     return meeting
+
+
+async def authorize_action_item_access(
+    db: AsyncSession,
+    action_item_id: uuid.UUID,
+    user: User,
+    level: AccessLevel = AccessLevel.READ,
+) -> ActionItem:
+    """Authorise via the owning meeting - there is no separate rule for items.
+
+    An action item is reachable exactly when its meeting is. Delegating keeps
+    the access rule in one function (``authorize_meeting_access``), so sharing
+    added there later automatically applies to action items too.
+    """
+    item = await db.scalar(select(ActionItem).where(ActionItem.id == action_item_id))
+    if item is None:
+        raise NotFoundError("Action item not found.")
+    try:
+        await authorize_meeting_access(db, item.meeting_id, user, level)
+    except NotFoundError:
+        # Same 404-not-403 reasoning: do not confirm the item id exists.
+        raise NotFoundError("Action item not found.") from None
+    return item
+
+
+async def authorize_decision_access(
+    db: AsyncSession,
+    decision_id: uuid.UUID,
+    user: User,
+    level: AccessLevel = AccessLevel.READ,
+) -> Decision:
+    decision = await db.scalar(select(Decision).where(Decision.id == decision_id))
+    if decision is None:
+        raise NotFoundError("Decision not found.")
+    try:
+        await authorize_meeting_access(db, decision.meeting_id, user, level)
+    except NotFoundError:
+        raise NotFoundError("Decision not found.") from None
+    return decision

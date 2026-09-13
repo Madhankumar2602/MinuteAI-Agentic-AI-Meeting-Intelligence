@@ -26,7 +26,8 @@ async def test_health_deps_reports_postgres_and_dynamodb(client: AsyncClient) ->
     response = await client.get("/health/deps")
     body = response.json()
 
-    assert set(body["checks"]) == {"postgres", "dynamodb"}
+    # "fake" is the test LLM provider's name; in production this key is "gemini".
+    assert set(body["checks"]) == {"postgres", "dynamodb", "fake"}
     assert body["checks"]["postgres"]["healthy"] is True
     # pgvector must be present - M6 depends on it.
     assert "pgvector=yes" in body["checks"]["postgres"]["detail"]
@@ -41,3 +42,14 @@ async def test_unknown_route_uses_the_standard_error_envelope(client: AsyncClien
     error = response.json()["error"]
     assert error["code"] == "http_error"
     assert error["request_id"]
+
+
+async def test_health_deps_is_degraded_when_the_llm_is_unhealthy(
+    client: AsyncClient, fake_llm
+) -> None:
+    fake_llm.healthy = False
+    response = await client.get("/health/deps")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["fake"]["healthy"] is False
