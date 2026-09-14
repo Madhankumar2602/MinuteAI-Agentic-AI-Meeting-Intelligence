@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { daysUntil, describeDeadline, formatBytes, formatDate, formatDuration } from "./format";
-import { inputProblem } from "./meetingInput";
+import { inputProblem, sourceTypeFor } from "./meetingInput";
 
 const today = new Date(2026, 8, 14, 15, 30); // 14 Sep 2026, local afternoon
 
@@ -38,11 +38,21 @@ describe("formatting", () => {
 });
 
 describe("inputProblem", () => {
-  it("requires enough transcript text, or a valid recording, but nothing for 'add later'", () => {
+  it("requires enough text for notes or a transcript, a matching file for audio or video, and nothing for 'add later'", () => {
+    const wav = new File(["RIFF"], "standup.wav", { type: "audio/wav" });
+    const mp4 = new File(["...."], "all-hands.mp4", { type: "video/mp4" });
     expect(inputProblem({ mode: "transcript", transcript: "  too short  ", file: null })).toMatch(/at least 20/);
-    expect(inputProblem({ mode: "transcript", transcript: "Priya: this is a long enough line.", file: null })).toBeNull();
-    expect(inputProblem({ mode: "recording", transcript: "", file: null })).toMatch(/Choose a recording/);
+    expect(inputProblem({ mode: "notes", transcript: "short", file: null })).toMatch(/meeting notes of at least 20/);
+    expect(inputProblem({ mode: "notes", transcript: "Budget approved; Leela sends forecast.", file: null })).toBeNull();
+    expect(inputProblem({ mode: "audio", transcript: "", file: null })).toMatch(/Choose an audio file/);
+    expect(inputProblem({ mode: "audio", transcript: "", file: wav })).toBeNull();
+    expect(inputProblem({ mode: "video", transcript: "", file: mp4 })).toBeNull();
+    expect(inputProblem({ mode: "audio", transcript: "", file: mp4 })).toMatch(/is a video. Choose the Video option/);
     expect(inputProblem({ mode: "later", transcript: "", file: null })).toBeNull();
+  });
+
+  it("maps each input to the meeting's source type", () => {
+    expect(["notes", "transcript", "audio", "video", "later"].map((m) => sourceTypeFor(m as never))).toEqual(["text", "text", "audio", "video", "text"]);
   });
 });
 

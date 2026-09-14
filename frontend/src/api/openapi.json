@@ -1513,6 +1513,110 @@
      }
     }
    }
+  },
+  "/api/v1/meetings/{meeting_id}/mom": {
+   "get": {
+    "tags": [
+     "minutes of meeting"
+    ],
+    "summary": "The structured Minutes of Meeting",
+    "description": "Assembled from the stored results, including the user's corrections, so it\nalways matches what the PDF shows.",
+    "operationId": "get_minutes_api_v1_meetings__meeting_id__mom_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MinutesOfMeeting"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "The meeting has not been processed yet (minutes_not_ready)."
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/mom/pdf": {
+   "post": {
+    "tags": [
+     "minutes of meeting"
+    ],
+    "summary": "Generate (or reuse) the Minutes of Meeting PDF and get view/download links",
+    "description": "The PDF is stored in object storage. An identical stored PDF is reused;\nif the minutes changed since it was made, a new one is rendered first.\n\nLinks are short-lived presigned URLs: ``view_url`` opens in the browser,\n``download_url`` saves the file.",
+    "operationId": "minutes_pdf_api_v1_meetings__meeting_id__mom_pdf_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MomPdfResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "The meeting has not been processed yet (minutes_not_ready)."
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
   }
  },
  "components": {
@@ -2001,7 +2105,7 @@
      "type": {
       "type": "string",
       "title": "Type",
-      "description": "queued, started, transcription_started, transcription_completed, indexing_completed, retry_scheduled, lease_expired_requeued, completed, failed"
+      "description": "queued, started, transcription_started, transcription_completed, indexing_completed, mom_pdf_generated, mom_pdf_failed, retry_scheduled, lease_expired_requeued, completed, failed"
      },
      "detail": {
       "additionalProperties": true,
@@ -2154,6 +2258,17 @@
        }
       ],
       "title": "Chunks"
+     },
+     "mom_pdf": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mom Pdf"
      },
      "decisions": {
       "type": "integer",
@@ -2527,6 +2642,555 @@
     "type": "object",
     "title": "MeetingUpdateRequest",
     "description": "Partial update - every field optional.\n\nDistinguishing \"field absent\" from \"field set to null\" is done with\n``model_dump(exclude_unset=True)`` in the route, so PATCH with an empty\nbody is a no-op rather than wiping the record."
+   },
+   "MinutesOfMeeting": {
+    "properties": {
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "agenda": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Agenda",
+      "description": "The meeting description / agenda, as entered."
+     },
+     "meeting_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Meeting Date"
+     },
+     "participants": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Participants"
+     },
+     "speakers": {
+      "items": {
+       "$ref": "#/components/schemas/MomSpeaker"
+      },
+      "type": "array",
+      "title": "Speakers"
+     },
+     "executive_summary": {
+      "type": "string",
+      "title": "Executive Summary"
+     },
+     "key_points": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Key Points"
+     },
+     "keywords": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Keywords"
+     },
+     "decisions": {
+      "items": {
+       "$ref": "#/components/schemas/MomDecision"
+      },
+      "type": "array",
+      "title": "Decisions"
+     },
+     "action_items": {
+      "items": {
+       "$ref": "#/components/schemas/MomActionItem"
+      },
+      "type": "array",
+      "title": "Action Items"
+     },
+     "pending_items": {
+      "items": {
+       "$ref": "#/components/schemas/MomPendingItem"
+      },
+      "type": "array",
+      "title": "Pending Items"
+     },
+     "next_steps": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Next Steps"
+     },
+     "next_steps_derived": {
+      "type": "boolean",
+      "title": "Next Steps Derived",
+      "description": "True when no next steps were stated and they were derived from open action items."
+     },
+     "review_flags": {
+      "items": {
+       "$ref": "#/components/schemas/MomReviewFlag"
+      },
+      "type": "array",
+      "title": "Review Flags"
+     },
+     "source": {
+      "$ref": "#/components/schemas/MomSource"
+     },
+     "is_stale": {
+      "type": "boolean",
+      "title": "Is Stale",
+      "description": "The transcript changed after these minutes were extracted."
+     }
+    },
+    "type": "object",
+    "required": [
+     "meeting_id",
+     "title",
+     "agenda",
+     "meeting_date",
+     "participants",
+     "speakers",
+     "executive_summary",
+     "key_points",
+     "keywords",
+     "decisions",
+     "action_items",
+     "pending_items",
+     "next_steps",
+     "next_steps_derived",
+     "review_flags",
+     "source",
+     "is_stale"
+    ],
+    "title": "MinutesOfMeeting"
+   },
+   "MomActionItem": {
+    "properties": {
+     "number": {
+      "type": "integer",
+      "title": "Number"
+     },
+     "task": {
+      "type": "string",
+      "title": "Task"
+     },
+     "owner": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Owner"
+     },
+     "deadline": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Deadline"
+     },
+     "deadline_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Deadline Text"
+     },
+     "priority": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ActionItemPriority"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "status": {
+      "$ref": "#/components/schemas/ActionItemStatus"
+     },
+     "evidence_quote": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Quote"
+     },
+     "evidence_verified": {
+      "type": "boolean",
+      "title": "Evidence Verified"
+     }
+    },
+    "type": "object",
+    "required": [
+     "number",
+     "task",
+     "owner",
+     "deadline",
+     "deadline_text",
+     "priority",
+     "status",
+     "evidence_quote",
+     "evidence_verified"
+    ],
+    "title": "MomActionItem"
+   },
+   "MomDecision": {
+    "properties": {
+     "number": {
+      "type": "integer",
+      "title": "Number"
+     },
+     "text": {
+      "type": "string",
+      "title": "Text"
+     },
+     "context": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Context"
+     },
+     "status": {
+      "$ref": "#/components/schemas/DecisionStatus"
+     },
+     "evidence_quote": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Quote"
+     },
+     "evidence_verified": {
+      "type": "boolean",
+      "title": "Evidence Verified"
+     }
+    },
+    "type": "object",
+    "required": [
+     "number",
+     "text",
+     "context",
+     "status",
+     "evidence_quote",
+     "evidence_verified"
+    ],
+    "title": "MomDecision"
+   },
+   "MomPdfResponse": {
+    "properties": {
+     "filename": {
+      "type": "string",
+      "title": "Filename"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     },
+     "pages": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Pages",
+      "description": "Known when this request rendered the document."
+     },
+     "fingerprint": {
+      "type": "string",
+      "title": "Fingerprint",
+      "description": "Hash of the minutes content the PDF was rendered from."
+     },
+     "reused": {
+      "type": "boolean",
+      "title": "Reused",
+      "description": "True when an identical stored PDF was reused."
+     },
+     "view_url": {
+      "type": "string",
+      "title": "View Url",
+      "description": "Opens the PDF in the browser. Short-lived."
+     },
+     "download_url": {
+      "type": "string",
+      "title": "Download Url",
+      "description": "Downloads the PDF. Short-lived."
+     },
+     "expires_in": {
+      "type": "integer",
+      "title": "Expires In"
+     }
+    },
+    "type": "object",
+    "required": [
+     "filename",
+     "size_bytes",
+     "pages",
+     "fingerprint",
+     "reused",
+     "view_url",
+     "download_url",
+     "expires_in"
+    ],
+    "title": "MomPdfResponse"
+   },
+   "MomPendingItem": {
+    "properties": {
+     "item": {
+      "type": "string",
+      "title": "Item"
+     },
+     "evidence_quote": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Quote"
+     },
+     "evidence_verified": {
+      "type": "boolean",
+      "title": "Evidence Verified"
+     }
+    },
+    "type": "object",
+    "required": [
+     "item",
+     "evidence_quote",
+     "evidence_verified"
+    ],
+    "title": "MomPendingItem"
+   },
+   "MomReviewFlag": {
+    "properties": {
+     "kind": {
+      "type": "string",
+      "enum": [
+       "missing_owner",
+       "missing_deadline",
+       "unresolved_deadline",
+       "unverified_evidence",
+       "unnamed_speakers",
+       "stale_transcript"
+      ],
+      "title": "Kind"
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     }
+    },
+    "type": "object",
+    "required": [
+     "kind",
+     "message"
+    ],
+    "title": "MomReviewFlag",
+    "description": "Something a person should check before relying on the minutes.\n\nProduced by deterministic validation, not by the model."
+   },
+   "MomSource": {
+    "properties": {
+     "input_kind": {
+      "type": "string",
+      "enum": [
+       "transcript",
+       "notes",
+       "recording"
+      ],
+      "title": "Input Kind"
+     },
+     "transcript_words": {
+      "type": "integer",
+      "title": "Transcript Words"
+     },
+     "transcript_sha256": {
+      "type": "string",
+      "title": "Transcript Sha256"
+     },
+     "language": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Language"
+     },
+     "recording_filename": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Recording Filename"
+     },
+     "recording_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Recording Type"
+     },
+     "duration_seconds": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duration Seconds"
+     },
+     "transcription_model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Transcription Model"
+     },
+     "extraction_provider": {
+      "type": "string",
+      "title": "Extraction Provider"
+     },
+     "extraction_model": {
+      "type": "string",
+      "title": "Extraction Model"
+     },
+     "prompt_version": {
+      "type": "string",
+      "title": "Prompt Version"
+     },
+     "extracted_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Extracted At"
+     },
+     "evidence_verified": {
+      "type": "integer",
+      "title": "Evidence Verified",
+      "description": "Items whose evidence quote was found in the input."
+     },
+     "evidence_total": {
+      "type": "integer",
+      "title": "Evidence Total",
+      "description": "Items that carry an evidence quote requirement."
+     }
+    },
+    "type": "object",
+    "required": [
+     "input_kind",
+     "transcript_words",
+     "transcript_sha256",
+     "language",
+     "recording_filename",
+     "recording_type",
+     "duration_seconds",
+     "transcription_model",
+     "extraction_provider",
+     "extraction_model",
+     "prompt_version",
+     "extracted_at",
+     "evidence_verified",
+     "evidence_total"
+    ],
+    "title": "MomSource"
+   },
+   "MomSpeaker": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "contribution": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Contribution"
+     },
+     "turns": {
+      "type": "integer",
+      "title": "Turns",
+      "description": "Speaking turns counted from the transcript (0 for notes)."
+     },
+     "words": {
+      "type": "integer",
+      "title": "Words"
+     },
+     "share": {
+      "type": "number",
+      "title": "Share",
+      "description": "Share of all spoken words, 0 to 1."
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "contribution",
+     "turns",
+     "words",
+     "share"
+    ],
+    "title": "MomSpeaker"
    },
    "Page_ActionItemResponse_": {
     "properties": {
@@ -2968,7 +3632,8 @@
     "type": "string",
     "enum": [
      "manual",
-     "transcription"
+     "transcription",
+     "notes"
     ],
     "title": "TranscriptSource"
    },
@@ -2995,6 +3660,16 @@
       "examples": [
        "en"
       ]
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "transcript",
+       "notes"
+      ],
+      "title": "Kind",
+      "description": "'transcript' for verbatim speech, 'notes' for meeting notes or a written description. The AI is told which it is reading.",
+      "default": "transcript"
      }
     },
     "type": "object",

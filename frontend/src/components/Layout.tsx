@@ -96,11 +96,11 @@ export function Layout() {
           {/* Visible but not clickable: these arrive in later milestones. They
               are labelled rather than shipped as empty pages, so nothing in the
               UI pretends to work before it does. */}
-          <span className="nav-item disabled" aria-disabled="true" title="Available in milestone M7">
-            <MessageSquareText size={18} /> Ask your meetings <span className="nav-soon">M7</span>
-          </span>
           <span className="nav-item disabled" aria-disabled="true" title="Available in milestone M8">
-            <Workflow size={18} /> Agent follow-ups <span className="nav-soon">M8</span>
+            <MessageSquareText size={18} /> Ask your meetings <span className="nav-soon">M8</span>
+          </span>
+          <span className="nav-item disabled" aria-disabled="true" title="Available in milestone M9">
+            <Workflow size={18} /> Agent follow-ups <span className="nav-soon">M9</span>
           </span>
         </nav>
 

@@ -14,6 +14,8 @@ import type {
   MeetingCreate,
   MeetingPage,
   MeetingStatus,
+  Minutes,
+  MinutesPdf,
   ProcessSubmission,
   SearchResponse,
   Token,
@@ -48,11 +50,15 @@ export const api = {
 
   // ---- transcript & processing --------------------------------------------
   getTranscript: (id: string) => apiRequest<Transcript>(`/meetings/${id}/transcript`),
-  putTranscript: (id: string, content: string) =>
-    apiRequest<Transcript>(`/meetings/${id}/transcript`, { method: "PUT", json: { content } }),
+  putTranscript: (id: string, content: string, kind: "transcript" | "notes" = "transcript") =>
+    apiRequest<Transcript>(`/meetings/${id}/transcript`, { method: "PUT", json: { content, kind } }),
   process: (id: string, force = false) =>
     apiRequest<ProcessSubmission>(`/meetings/${id}/process${qs({ force: force || undefined })}`, { method: "POST" }),
   getIntelligence: (id: string) => apiRequest<Intelligence>(`/meetings/${id}/intelligence`),
+
+  // ---- minutes of meeting (the core output) -------------------------------
+  getMinutes: (id: string) => apiRequest<Minutes>(`/meetings/${id}/mom`),
+  minutesPdf: (id: string) => apiRequest<MinutesPdf>(`/meetings/${id}/mom/pdf`, { method: "POST" }),
 
   // ---- jobs --------------------------------------------------------------
   getJob: (jobId: string) => apiRequest<Job>(`/jobs/${jobId}`),

@@ -185,3 +185,38 @@ export function intelligence(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+export function minutes(overrides: Record<string, unknown> = {}) {
+  return {
+    meeting_id: MEETING.id,
+    title: MEETING.title,
+    agenda: "1. PostgreSQL migration",
+    meeting_date: MEETING.meeting_date,
+    participants: ["Priya", "Karthik"],
+    speakers: [
+      { name: "Priya", contribution: "Chaired and assigned the runbook.", turns: 5, words: 120, share: 0.6 },
+      { name: "Karthik", contribution: "Owns the migration runbook.", turns: 3, words: 80, share: 0.4 },
+    ],
+    executive_summary: "The team agreed to migrate production to PostgreSQL 16.",
+    key_points: ["Staging is on PostgreSQL 16"],
+    keywords: ["PostgreSQL migration", "Runbook"],
+    decisions: [
+      { number: 1, text: "Migrate production to PostgreSQL 16 on Sunday.", context: null, status: "open", evidence_quote: "We will migrate", evidence_verified: false },
+    ],
+    action_items: [
+      { number: 1, task: "Prepare the production migration runbook", owner: "Karthik", deadline: "2026-09-16", deadline_text: "by next Wednesday", priority: null, status: "pending", evidence_quote: "runbook", evidence_verified: true },
+    ],
+    pending_items: [{ item: "Whether to change auth provider", evidence_quote: "idea for later", evidence_verified: true }],
+    next_steps: ["Production migration on Sunday"],
+    next_steps_derived: false,
+    review_flags: [{ kind: "unverified_evidence", message: "No supporting quote was found in the input for decision 1." }],
+    source: {
+      input_kind: "transcript", transcript_words: 319, transcript_sha256: "a".repeat(64), language: "en",
+      recording_filename: null, recording_type: null, duration_seconds: null, transcription_model: null,
+      extraction_provider: "gemini", extraction_model: "gemini-3.6-flash", prompt_version: "extract-v2",
+      extracted_at: "2026-09-10T11:00:20Z", evidence_verified: 2, evidence_total: 3,
+    },
+    is_stale: false,
+    ...overrides,
+  };
+}

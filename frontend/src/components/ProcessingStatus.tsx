@@ -38,7 +38,7 @@ function stepsFor(job: Job): Step[] {
   steps.push({
     key: "analyse",
     label: "Analysing",
-    sub: "Decisions and actions",
+    sub: "Minutes of meeting",
     icon: Sparkles,
     state: done ? "done" : failed ? (analysisReached || !recording ? "failed" : "todo") : analysisReached ? "active" : "todo",
   });
@@ -57,6 +57,9 @@ const EVENT_TEXT: Record<string, string> = {
   started: "Worker started",
   transcription_started: "Transcribing the recording",
   transcription_completed: "Transcription finished",
+  indexing_completed: "Indexed for search",
+  mom_pdf_generated: "Minutes PDF generated",
+  mom_pdf_failed: "Minutes PDF could not be stored — it will be generated on request",
   retry_scheduled: "Attempt failed — retry scheduled",
   lease_expired_requeued: "Worker stopped responding — requeued",
   completed: "Completed",

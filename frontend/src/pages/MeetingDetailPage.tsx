@@ -13,24 +13,25 @@ import {
   Sparkles,
   Trash2,
   TriangleAlert,
-  Users,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { ApiError } from "../api/client";
 import { api } from "../api/endpoints";
-import type { Decision, DecisionStatus, Intelligence, Media, Meeting, Transcript } from "../api/types";
+import type { Decision, DecisionStatus, Media, Meeting, Transcript } from "../api/types";
 import { ActionItemRow } from "../components/ActionItemRow";
 import { useFeedback } from "../components/feedback-context";
 import { MeetingInput } from "../components/MeetingInput";
 import { SourceIcon } from "../components/MeetingRow";
+import { MinutesPdfButtons } from "../components/MinutesPdf";
+import { MinutesTab } from "../components/MinutesView";
 import { FormattedTranscript, type CharRange } from "../components/TranscriptText";
 import { ProcessingStatus } from "../components/ProcessingStatus";
-import { Avatar, Badge, EmptyState, ErrorBanner, MeetingStatusBadge, PageLoading, Spinner } from "../components/ui";
+import { Badge, EmptyState, ErrorBanner, MeetingStatusBadge, PageLoading, Spinner } from "../components/ui";
 import { formatBytes, formatDate, formatDateTime, formatDuration } from "../lib/format";
 import { DECISION_STATUS_LABEL } from "../lib/labels";
-import { inputProblem, type MeetingInputValue } from "../lib/meetingInput";
+import { inputProblem, isFileMode, type MeetingInputValue } from "../lib/meetingInput";
 import { submitMeetingInput } from "../lib/submitInput";
 
 const POLL_MS = 2000;
@@ -158,7 +159,7 @@ export function MeetingDetailPage() {
     if (hasResults) {
       const ok = await confirm({
         title: "Re-run the AI analysis?",
-        message: "Summary, decisions, and action items are regenerated. Status changes you made to action items will be reset.",
+        message: "The minutes (summary, decisions, action items) are regenerated. Status changes you made to action items will be reset.",
         confirmLabel: "Re-run analysis",
         tone: "primary",
       });
@@ -194,6 +195,7 @@ export function MeetingDetailPage() {
           {m.description && <div className="page-subtitle">{m.description}</div>}
         </div>
         <div className="row">
+          {hasResults && <MinutesPdfButtons meetingId={meetingId} />}
           {hasInput && !busy && (
             <button type="button" className={`btn ${hasResults ? "" : "btn-gradient"}`} disabled={processMutation.isPending} onClick={() => void rerun()}>
               {processMutation.isPending ? <Spinner label="Submitting" /> : hasResults ? <><RotateCw size={15} /> Re-run AI</> : <><Sparkles size={15} /> Process meeting</>}
@@ -230,16 +232,14 @@ export function MeetingDetailPage() {
         {hasResults && results && (
           <>
             <div className="tabs" role="tablist" aria-label="Meeting sections">
-              <TabButton id="overview" current={tab} onSelect={setTab} icon={LayoutList} label="Overview" />
+              <TabButton id="overview" current={tab} onSelect={setTab} icon={LayoutList} label="Minutes" />
               <TabButton id="actions" current={tab} onSelect={setTab} icon={CheckSquare} label="Action items" count={results.action_items.length} />
               <TabButton id="decisions" current={tab} onSelect={setTab} icon={Gavel} label="Decisions" count={results.decisions.length} />
               <TabButton id="transcript" current={tab} onSelect={setTab} icon={FileText} label="Transcript" />
             </div>
 
             <div role="tabpanel" aria-label={tab}>
-              {tab === "overview" && (
-                <OverviewTab meeting={m} results={results} transcript={transcript.data ?? null} media={media.data ?? null} onOpen={setTab} />
-              )}
+              {tab === "overview" && <MinutesTab meetingId={meetingId} actionItems={results.action_items} />}
               {tab === "actions" && (
                 <section className="card" aria-label="Action items">
                   {results.action_items.length === 0 ? (
@@ -286,119 +286,6 @@ function TabButton({ id, current, onSelect, icon: Icon, label, count }: {
   );
 }
 
-function OverviewTab({ meeting, results, transcript, media, onOpen }: {
-  meeting: Meeting;
-  results: Intelligence;
-  transcript: Transcript | null;
-  media: Media | null;
-  onOpen: (tab: TabKey) => void;
-}) {
-  const summary = results.summary!;
-  const openItems = results.action_items.filter((i) => i.status === "pending" || i.status === "in_progress");
-  const tasksByOwner = new Map<string, number>();
-  for (const item of results.action_items) {
-    if (item.owner_name) tasksByOwner.set(item.owner_name.toLowerCase(), (tasksByOwner.get(item.owner_name.toLowerCase()) ?? 0) + 1);
-  }
-  const verified =
-    results.decisions.filter((d) => d.evidence_verified).length + results.action_items.filter((a) => a.evidence_verified).length;
-  const extracted = results.decisions.length + results.action_items.length;
-
-  return (
-    <div className="grid-main">
-      <div className="stack">
-        <section className="card" aria-labelledby="summary-heading">
-          <div className="card-head">
-            <h2 className="card-title" id="summary-heading"><Sparkles size={16} /> Summary</h2>
-            <span className="card-sub" title={`Prompt ${summary.prompt_version}`}>Generated {formatDateTime(summary.created_at)}</span>
-          </div>
-          <div className="card-pad">
-            {summary.is_stale && (
-              <div className="alert alert-warning" style={{ marginBottom: 14 }}>
-                <TriangleAlert size={17} aria-hidden />
-                <div>The transcript changed after this summary was generated. Re-run AI to update it.</div>
-              </div>
-            )}
-            <p className="summary-text">{summary.summary_text}</p>
-            {summary.key_points.length > 0 && (
-              <ul className="key-points">
-                {summary.key_points.map((point) => (
-                  <li key={point}><Sparkles size={13} aria-hidden /> {point}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        <section className="card" aria-labelledby="next-heading">
-          <div className="card-head">
-            <h2 className="card-title" id="next-heading"><CheckSquare size={16} /> Next steps</h2>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpen("actions")}>All {results.action_items.length} action items</button>
-          </div>
-          {openItems.length === 0 ? (
-            <EmptyState icon={CheckSquare} title={results.action_items.length ? "Every action item is done" : "No action items"} />
-          ) : (
-            <ul className="list">
-              {openItems.slice(0, 4).map((item) => <ActionItemRow key={item.id} item={item} />)}
-            </ul>
-          )}
-        </section>
-
-        {results.decisions.length > 0 && (
-          <section className="card" aria-labelledby="key-decisions-heading">
-            <div className="card-head">
-              <h2 className="card-title" id="key-decisions-heading"><Gavel size={16} /> Decisions</h2>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpen("decisions")}>Details</button>
-            </div>
-            <ul className="list">
-              {results.decisions.map((d) => (
-                <li key={d.id} className="list-item">
-                  <Gavel size={16} style={{ color: "var(--primary)", marginTop: 3 }} aria-hidden />
-                  <div className="body"><div className="title">{d.decision_text}</div></div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </div>
-
-      <div className="stack">
-        <section className="card card-pad" aria-labelledby="glance-heading">
-          <h2 className="card-title" id="glance-heading" style={{ marginBottom: 14 }}>At a glance</h2>
-          <dl className="kv">
-            <dt>Date</dt><dd>{formatDate(meeting.meeting_date)}</dd>
-            <dt>Input</dt><dd>{SOURCE_LABEL[meeting.source_type]}</dd>
-            {transcript?.duration_seconds != null && (<><dt>Duration</dt><dd>{formatDuration(transcript.duration_seconds)}</dd></>)}
-            {transcript && (<><dt>Transcript</dt><dd>{transcript.word_count.toLocaleString()} words</dd></>)}
-            <dt>Evidence</dt><dd>{verified} of {extracted} verified</dd>
-            <dt>Model</dt><dd>{summary.model}</dd>
-          </dl>
-          {results.warnings.length > 0 && <p className="faint xs" style={{ marginTop: 12 }}>Warnings: {results.warnings.join("; ")}</p>}
-        </section>
-
-        {results.participants.length > 0 && (
-          <section className="card card-pad" aria-labelledby="participants-heading">
-            <h2 className="card-title" id="participants-heading" style={{ marginBottom: 14 }}><Users size={16} /> Participants</h2>
-            <div className="people">
-              {results.participants.map((p) => {
-                const tasks = tasksByOwner.get(p.display_name.toLowerCase()) ?? 0;
-                return (
-                  <div key={p.id} className="person">
-                    <Avatar name={p.display_name} />
-                    <span className="strong" style={{ flex: 1 }}>{p.display_name}</span>
-                    {tasks > 0 && <span className="faint small">{tasks} task{tasks === 1 ? "" : "s"}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {media && transcript && <RecordingCard media={media} transcript={transcript} />}
-      </div>
-    </div>
-  );
-}
-
 function RecordingCard({ media, transcript }: { media: Media; transcript: Transcript }) {
   return (
     <section className="card card-pad" aria-labelledby="recording-heading">
@@ -419,11 +306,11 @@ function RecordingCard({ media, transcript }: { media: Media; transcript: Transc
 function AddInputCard({ meetingId }: { meetingId: string }) {
   const queryClient = useQueryClient();
   const { toast, confirm } = useFeedback();
-  const [value, setValue] = useState<MeetingInputValue>({ mode: "transcript", transcript: "", file: null });
+  const [value, setValue] = useState<MeetingInputValue>({ mode: "notes", transcript: "", file: null });
   const [progress, setProgress] = useState<number | null>(null);
   const mutation = useMutation({
     mutationFn: () => {
-      if (value.mode === "recording") setProgress(0);
+      if (isFileMode(value.mode)) setProgress(0);
       return submitMeetingInput(meetingId, value, {
         onProgress: setProgress,
         confirmReplaceTranscript: () =>
@@ -443,7 +330,7 @@ function AddInputCard({ meetingId }: { meetingId: string }) {
       <div className="card-head">
         <div>
           <h2 className="card-title" id="add-input-heading"><FileText size={16} /> Add meeting content</h2>
-          <div className="card-sub">A transcript or recording is needed before analysis can run.</div>
+          <div className="card-sub">Notes, a transcript, audio, or video is needed before minutes can be generated.</div>
         </div>
       </div>
       <div className="card-pad stack">
@@ -466,6 +353,7 @@ function DecisionsCard({ meetingId, decisions }: { meetingId: string; decisions:
     mutationFn: ({ id, status }: { id: string; status: DecisionStatus }) => api.updateDecision(id, status),
     onSuccess: (_d, vars) => {
       void queryClient.invalidateQueries({ queryKey: ["meeting", meetingId, "intelligence"] });
+      void queryClient.invalidateQueries({ queryKey: ["meeting", meetingId, "minutes"] });
       toast({ title: `Decision marked ${DECISION_STATUS_LABEL[vars.status].toLowerCase()}` });
     },
   });

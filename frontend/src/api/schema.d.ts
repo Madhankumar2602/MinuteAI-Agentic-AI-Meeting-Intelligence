@@ -450,6 +450,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/meetings/{meeting_id}/mom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The structured Minutes of Meeting
+         * @description Assembled from the stored results, including the user's corrections, so it
+         *     always matches what the PDF shows.
+         */
+        get: operations["get_minutes_api_v1_meetings__meeting_id__mom_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/meetings/{meeting_id}/mom/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate (or reuse) the Minutes of Meeting PDF and get view/download links
+         * @description The PDF is stored in object storage. An identical stored PDF is reused;
+         *     if the minutes changed since it was made, a new one is rendered first.
+         *
+         *     Links are short-lived presigned URLs: ``view_url`` opens in the browser,
+         *     ``download_url`` saves the file.
+         */
+        post: operations["minutes_pdf_api_v1_meetings__meeting_id__mom_pdf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -631,7 +676,7 @@ export interface components {
             at: string;
             /**
              * Type
-             * @description queued, started, transcription_started, transcription_completed, indexing_completed, retry_scheduled, lease_expired_requeued, completed, failed
+             * @description queued, started, transcription_started, transcription_completed, indexing_completed, mom_pdf_generated, mom_pdf_failed, retry_scheduled, lease_expired_requeued, completed, failed
              */
             type: string;
             /** Detail */
@@ -688,6 +733,8 @@ export interface components {
             transcribed: boolean;
             /** Chunks */
             chunks?: number | null;
+            /** Mom Pdf */
+            mom_pdf?: boolean | null;
             /** Decisions */
             decisions: number;
             /** Action Items */
@@ -844,6 +891,210 @@ export interface components {
             /** Description */
             description?: string | null;
             source_type?: components["schemas"]["MeetingSourceType"] | null;
+        };
+        /** MinutesOfMeeting */
+        MinutesOfMeeting: {
+            /**
+             * Meeting Id
+             * Format: uuid
+             */
+            meeting_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Agenda
+             * @description The meeting description / agenda, as entered.
+             */
+            agenda: string | null;
+            /**
+             * Meeting Date
+             * Format: date-time
+             */
+            meeting_date: string;
+            /** Participants */
+            participants: string[];
+            /** Speakers */
+            speakers: components["schemas"]["MomSpeaker"][];
+            /** Executive Summary */
+            executive_summary: string;
+            /** Key Points */
+            key_points: string[];
+            /** Keywords */
+            keywords: string[];
+            /** Decisions */
+            decisions: components["schemas"]["MomDecision"][];
+            /** Action Items */
+            action_items: components["schemas"]["MomActionItem"][];
+            /** Pending Items */
+            pending_items: components["schemas"]["MomPendingItem"][];
+            /** Next Steps */
+            next_steps: string[];
+            /**
+             * Next Steps Derived
+             * @description True when no next steps were stated and they were derived from open action items.
+             */
+            next_steps_derived: boolean;
+            /** Review Flags */
+            review_flags: components["schemas"]["MomReviewFlag"][];
+            source: components["schemas"]["MomSource"];
+            /**
+             * Is Stale
+             * @description The transcript changed after these minutes were extracted.
+             */
+            is_stale: boolean;
+        };
+        /** MomActionItem */
+        MomActionItem: {
+            /** Number */
+            number: number;
+            /** Task */
+            task: string;
+            /** Owner */
+            owner: string | null;
+            /** Deadline */
+            deadline: string | null;
+            /** Deadline Text */
+            deadline_text: string | null;
+            priority: components["schemas"]["ActionItemPriority"] | null;
+            status: components["schemas"]["ActionItemStatus"];
+            /** Evidence Quote */
+            evidence_quote: string | null;
+            /** Evidence Verified */
+            evidence_verified: boolean;
+        };
+        /** MomDecision */
+        MomDecision: {
+            /** Number */
+            number: number;
+            /** Text */
+            text: string;
+            /** Context */
+            context: string | null;
+            status: components["schemas"]["DecisionStatus"];
+            /** Evidence Quote */
+            evidence_quote: string | null;
+            /** Evidence Verified */
+            evidence_verified: boolean;
+        };
+        /** MomPdfResponse */
+        MomPdfResponse: {
+            /** Filename */
+            filename: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Pages
+             * @description Known when this request rendered the document.
+             */
+            pages: number | null;
+            /**
+             * Fingerprint
+             * @description Hash of the minutes content the PDF was rendered from.
+             */
+            fingerprint: string;
+            /**
+             * Reused
+             * @description True when an identical stored PDF was reused.
+             */
+            reused: boolean;
+            /**
+             * View Url
+             * @description Opens the PDF in the browser. Short-lived.
+             */
+            view_url: string;
+            /**
+             * Download Url
+             * @description Downloads the PDF. Short-lived.
+             */
+            download_url: string;
+            /** Expires In */
+            expires_in: number;
+        };
+        /** MomPendingItem */
+        MomPendingItem: {
+            /** Item */
+            item: string;
+            /** Evidence Quote */
+            evidence_quote: string | null;
+            /** Evidence Verified */
+            evidence_verified: boolean;
+        };
+        /**
+         * MomReviewFlag
+         * @description Something a person should check before relying on the minutes.
+         *
+         *     Produced by deterministic validation, not by the model.
+         */
+        MomReviewFlag: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "missing_owner" | "missing_deadline" | "unresolved_deadline" | "unverified_evidence" | "unnamed_speakers" | "stale_transcript";
+            /** Message */
+            message: string;
+        };
+        /** MomSource */
+        MomSource: {
+            /**
+             * Input Kind
+             * @enum {string}
+             */
+            input_kind: "transcript" | "notes" | "recording";
+            /** Transcript Words */
+            transcript_words: number;
+            /** Transcript Sha256 */
+            transcript_sha256: string;
+            /** Language */
+            language: string | null;
+            /** Recording Filename */
+            recording_filename: string | null;
+            /** Recording Type */
+            recording_type: string | null;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Transcription Model */
+            transcription_model: string | null;
+            /** Extraction Provider */
+            extraction_provider: string;
+            /** Extraction Model */
+            extraction_model: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /**
+             * Extracted At
+             * Format: date-time
+             */
+            extracted_at: string;
+            /**
+             * Evidence Verified
+             * @description Items whose evidence quote was found in the input.
+             */
+            evidence_verified: number;
+            /**
+             * Evidence Total
+             * @description Items that carry an evidence quote requirement.
+             */
+            evidence_total: number;
+        };
+        /** MomSpeaker */
+        MomSpeaker: {
+            /** Name */
+            name: string;
+            /** Contribution */
+            contribution: string | null;
+            /**
+             * Turns
+             * @description Speaking turns counted from the transcript (0 for notes).
+             */
+            turns: number;
+            /** Words */
+            words: number;
+            /**
+             * Share
+             * @description Share of all spoken words, 0 to 1.
+             */
+            share: number;
         };
         /** Page[ActionItemResponse] */
         Page_ActionItemResponse_: {
@@ -1030,7 +1281,7 @@ export interface components {
          * TranscriptSource
          * @enum {string}
          */
-        TranscriptSource: "manual" | "transcription";
+        TranscriptSource: "manual" | "transcription" | "notes";
         /** TranscriptUpsertRequest */
         TranscriptUpsertRequest: {
             /**
@@ -1043,6 +1294,13 @@ export interface components {
              * @example en
              */
             language?: string | null;
+            /**
+             * Kind
+             * @description 'transcript' for verbatim speech, 'notes' for meeting notes or a written description. The AI is told which it is reading.
+             * @default transcript
+             * @enum {string}
+             */
+            kind: "transcript" | "notes";
         };
         /** UploadCompleteRequest */
         UploadCompleteRequest: {
@@ -2056,6 +2314,82 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SearchResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_minutes_api_v1_meetings__meeting_id__mom_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MinutesOfMeeting"];
+                };
+            };
+            /** @description The meeting has not been processed yet (minutes_not_ready). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    minutes_pdf_api_v1_meetings__meeting_id__mom_pdf_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                meeting_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MomPdfResponse"];
+                };
+            };
+            /** @description The meeting has not been processed yet (minutes_not_ready). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

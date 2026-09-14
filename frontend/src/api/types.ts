@@ -41,4 +41,7 @@ export type UploadComplete = Schemas["UploadCompleteResponse"];
 export type Dashboard = Schemas["DashboardResponse"];
 
 export type SearchResponse = Schemas["SearchResponse"];
+
+export type Minutes = Schemas["MinutesOfMeeting"];
+export type MinutesPdf = Schemas["MomPdfResponse"];
 export type SearchResult = Schemas["SearchResult"];

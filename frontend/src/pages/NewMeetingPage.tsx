@@ -9,7 +9,7 @@ import { useFeedback } from "../components/feedback-context";
 import { MeetingInput } from "../components/MeetingInput";
 import { ErrorBanner, PageHeader, Spinner } from "../components/ui";
 import { localInputToIso, nowForDateTimeInput } from "../lib/format";
-import { inputProblem, type MeetingInputValue } from "../lib/meetingInput";
+import { inputProblem, isFileMode, sourceTypeFor, type MeetingInputValue } from "../lib/meetingInput";
 import { submitMeetingInput } from "../lib/submitInput";
 
 export function NewMeetingPage() {
@@ -20,7 +20,7 @@ export function NewMeetingPage() {
   const [title, setTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState(nowForDateTimeInput);
   const [description, setDescription] = useState("");
-  const [input, setInput] = useState<MeetingInputValue>({ mode: "transcript", transcript: "", file: null });
+  const [input, setInput] = useState<MeetingInputValue>({ mode: "notes", transcript: "", file: null });
   const [error, setError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
@@ -43,10 +43,10 @@ export function NewMeetingPage() {
         title: title.trim(),
         meeting_date: localInputToIso(meetingDate),
         description: description.trim() || null,
-        source_type: input.mode === "recording" ? (input.file?.type.startsWith("video/") ? "video" : "audio") : "text",
+        source_type: sourceTypeFor(input.mode),
       });
       meetingId = meeting.id;
-      if (input.mode === "recording") setProgress(0);
+      if (isFileMode(input.mode)) setProgress(0);
       await submitMeetingInput(meeting.id, input, { onProgress: setProgress });
       await queryClient.invalidateQueries({ queryKey: ["meetings"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -72,7 +72,7 @@ export function NewMeetingPage() {
   return (
     <>
       <Link to="/meetings" className="back-link"><ArrowLeft size={16} /> Meetings</Link>
-      <PageHeader title="New meeting" subtitle="Tell MinuteAI what happened. It will find the decisions and the next steps." />
+      <PageHeader title="New meeting" subtitle="Give MinuteAI notes, a transcript, audio, or video. You get structured minutes and a PDF." />
 
       <form className="card" onSubmit={onSubmit} noValidate>
         <div className="card-pad stack-lg">
@@ -102,9 +102,9 @@ export function NewMeetingPage() {
               </div>
             </div>
             <div className="field">
-              <label className="label" htmlFor="description">Description <span className="optional">(optional)</span></label>
-              <input id="description" className="input" type="text" maxLength={5000} placeholder="What was this meeting about?" value={description} onChange={(e) => setDescription(e.target.value)} disabled={submitting} />
-              <span className="hint">The date is used to resolve deadlines like “next Friday”.</span>
+              <label className="label" htmlFor="description">Agenda / description <span className="optional">(optional)</span></label>
+              <input id="description" className="input" type="text" maxLength={5000} placeholder="e.g. 1. Database migration  2. Auth logouts  3. Deployment" value={description} onChange={(e) => setDescription(e.target.value)} disabled={submitting} />
+              <span className="hint">Shown on the minutes and given to the AI as context. The date resolves deadlines like “next Friday”.</span>
             </div>
           </div>
 
@@ -112,11 +112,11 @@ export function NewMeetingPage() {
         </div>
 
         <div className="card-foot row-between">
-          <span className="faint small">Processing usually takes 15–45 seconds.</span>
+          <span className="faint small">Minutes are usually ready in 15–45 seconds; recordings take a little longer.</span>
           <div className="row">
             <Link to="/meetings" className="btn btn-ghost">Cancel</Link>
             <button type="submit" className="btn btn-gradient" disabled={submitting}>
-              {submitting ? <Spinner label="Saving" /> : input.mode === "later" ? "Create meeting" : <><Sparkles size={16} /> Create and analyse</>}
+              {submitting ? <Spinner label="Saving" /> : input.mode === "later" ? "Create meeting" : <><Sparkles size={16} /> Generate minutes</>}
             </button>
           </div>
         </div>

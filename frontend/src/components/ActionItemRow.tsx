@@ -19,6 +19,7 @@ function useItemUpdate() {
       void queryClient.invalidateQueries({ queryKey: ["action-items"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["meeting", updated.meeting_id, "intelligence"] });
+      void queryClient.invalidateQueries({ queryKey: ["meeting", updated.meeting_id, "minutes"] });
       toast({
         title: vars.status === "done" ? "Marked as done" : `Moved to ${ACTION_STATUS_LABEL[vars.status].toLowerCase()}`,
         text: vars.task,

@@ -4,10 +4,10 @@
  */
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { session } from "../auth/session";
-import { MEETING, USER, actionItem, apiError, intelligence, job, mockApi } from "../test/mockApi";
+import { MEETING, USER, actionItem, apiError, intelligence, job, minutes, mockApi } from "../test/mockApi";
 import { renderApp } from "../test/render";
 
 const DASHBOARD = {
@@ -33,6 +33,7 @@ function detailRoutes(overrides: Record<string, object> = {}) {
     [`GET /api/v1/meetings/${MEETING.id}/intelligence`]: intelligence(),
     [`GET /api/v1/meetings/${MEETING.id}/transcript`]: TRANSCRIPT,
     [`GET /api/v1/meetings/${MEETING.id}/media`]: apiError(404, "not_found", "No recording."),
+    [`GET /api/v1/meetings/${MEETING.id}/mom`]: minutes(),
     ...overrides,
   };
 }
@@ -182,8 +183,9 @@ describe("new meeting", () => {
     const user = userEvent.setup();
 
     await user.type(await screen.findByLabelText("Title"), "Platform sync");
+    await user.click(screen.getByRole("button", { name: /^Transcript/ }));
     await user.type(screen.getByLabelText("Transcript"), "Priya: Karthik, please prepare the runbook by Friday.");
-    await user.click(screen.getByRole("button", { name: /Create and analyse/ }));
+    await user.click(screen.getByRole("button", { name: /Generate minutes/ }));
 
     expect(await screen.findByRole("heading", { name: "Processing" })).toBeInTheDocument();
     expect(await screen.findByText("Meeting created — analysis started")).toBeInTheDocument();
@@ -194,6 +196,43 @@ describe("new meeting", () => {
       `POST /api/v1/meetings/${MEETING.id}/process`,
     ]);
     expect(requests.find((r) => r.method === "POST" && r.path === "/api/v1/meetings")!.body).toMatchObject({ title: "Platform sync", source_type: "text" });
+    expect(requests.find((r) => r.method === "PUT")!.body).toMatchObject({ kind: "transcript" });
+  });
+
+  it("starts with meeting notes, sent as notes so the AI knows it is not verbatim speech", async () => {
+    const { requests } = mockApi(
+      detailRoutes({
+        "POST /api/v1/meetings": { ...MEETING, status: "created" },
+        [`PUT /api/v1/meetings/${MEETING.id}/transcript`]: { ...TRANSCRIPT, source: "notes" },
+        [`POST /api/v1/meetings/${MEETING.id}/process`]: { cached: false, meeting_status: "queued", job: job({ status: "QUEUED" }) },
+      }),
+    );
+    renderApp("/meetings/new");
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole("button", { name: /^Meeting notes/ })).toHaveAttribute("aria-pressed", "true");
+    await user.type(screen.getByLabelText("Title"), "Budget review");
+    await user.type(screen.getByLabelText(/Agenda/), "Q4 budget");
+    await user.type(screen.getByLabelText("Meeting notes"), "Budget approved. Leela sends the forecast by Friday.");
+    await user.click(screen.getByRole("button", { name: /Generate minutes/ }));
+
+    await waitFor(() => expect(requests.some((r) => r.path.endsWith("/process"))).toBe(true));
+    expect(requests.find((r) => r.method === "POST" && r.path === "/api/v1/meetings")!.body).toMatchObject({ description: "Q4 budget", source_type: "text" });
+    expect(requests.find((r) => r.method === "PUT")!.body).toEqual({ content: "Budget approved. Leela sends the forecast by Friday.", kind: "notes" });
+  });
+
+  it("offers audio and video separately and catches a file chosen under the wrong one", async () => {
+    const { requests } = mockApi({ "GET /api/v1/auth/me": USER, "GET /api/v1/dashboard": DASHBOARD });
+    renderApp("/meetings/new");
+    const user = userEvent.setup({ applyAccept: false });
+
+    await user.click(await screen.findByRole("button", { name: /^Audio/ }));
+    await user.upload(screen.getByTestId("recording-input"), new File(["...."], "all-hands.mp4", { type: "video/mp4" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("is a video. Choose the Video option instead.");
+
+    await user.click(screen.getByRole("button", { name: /^Video/ }));
+    expect(screen.getByRole("button", { name: "Choose a video" })).toBeInTheDocument(); // the file did not carry over
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
   });
 
   it("requires a title and enough transcript text before sending anything", async () => {
@@ -201,13 +240,13 @@ describe("new meeting", () => {
     renderApp("/meetings/new");
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole("button", { name: /Create and analyse/ }));
+    await user.click(await screen.findByRole("button", { name: /Generate minutes/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Give the meeting a title.");
     expect(screen.getByLabelText("Title")).toHaveAttribute("aria-invalid", "true");
 
     await user.type(screen.getByLabelText("Title"), "Sync");
-    await user.type(screen.getByLabelText("Transcript"), "too short");
-    await user.click(screen.getByRole("button", { name: /Create and analyse/ }));
+    await user.type(screen.getByLabelText("Meeting notes"), "too short");
+    await user.click(screen.getByRole("button", { name: /Generate minutes/ }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("at least 20 characters");
     expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
@@ -218,7 +257,7 @@ describe("new meeting", () => {
     renderApp("/meetings/new");
     const user = userEvent.setup({ applyAccept: false });
 
-    await user.click(await screen.findByRole("button", { name: /Upload recording/ }));
+    await user.click(await screen.findByRole("button", { name: /^Audio/ }));
     await user.upload(screen.getByTestId("recording-input"), new File(["%PDF"], "minutes.pdf", { type: "application/pdf" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("not a supported audio or video file");
@@ -227,13 +266,20 @@ describe("new meeting", () => {
 });
 
 describe("meeting detail", () => {
-  it("shows the summary on the overview and results on their tabs", async () => {
+  it("opens on the structured minutes, with every section, and keeps details on their tabs", async () => {
     mockApi(detailRoutes());
     renderApp(`/meetings/${MEETING.id}`);
     const user = userEvent.setup();
 
+    expect(await screen.findByRole("tab", { name: /Minutes/ })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText("The team agreed to migrate production to PostgreSQL 16.")).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Participants" })).getByText("Karthik")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Keywords")).getByText("PostgreSQL migration")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Key discussion points" })).getByText("Staging is on PostgreSQL 16")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Speakers" })).getByText("Owns the migration runbook.")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: /Pending/ })).getByText("Whether to change auth provider")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Next steps" })).getByText("Production migration on Sunday")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Needs review" })).getByText(/decision 1/)).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Source" })).getByText("2 of 3 verified")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /Action items/ }));
     const actions = screen.getByRole("region", { name: "Action items" });
@@ -483,5 +529,60 @@ describe("semantic search", () => {
     const marked = transcript.querySelectorAll("[data-highlighted]");
     expect(marked).toHaveLength(1);
     expect(marked[0]).toHaveTextContent("Karthik: I'll have the runbook ready");
+  });
+});
+
+describe("minutes PDF", () => {
+  const PDF = {
+    filename: "MOM - Platform sync - 2026-09-10.pdf", size_bytes: 70_526, pages: 2, fingerprint: "f".repeat(64), reused: false,
+    view_url: "http://localhost:9000/bucket/mom.pdf?disposition=inline", download_url: "http://localhost:9000/bucket/mom.pdf?disposition=attachment", expires_in: 900,
+  };
+
+  it("previews the PDF inside the app, requesting it only when asked", async () => {
+    const { requests } = mockApi(detailRoutes({ [`POST /api/v1/meetings/${MEETING.id}/mom/pdf`]: PDF }));
+    renderApp(`/meetings/${MEETING.id}`);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /View minutes PDF/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: PDF.filename });
+    expect(within(dialog).getByTitle("Minutes of Meeting PDF preview")).toHaveAttribute("src", PDF.view_url);
+    // Plain links, not script-opened windows, so popup blockers cannot stop them.
+    expect(within(dialog).getByRole("link", { name: /Open in new tab/ })).toHaveAttribute("href", PDF.view_url);
+    expect(within(dialog).getByRole("link", { name: /Download/ })).toHaveAttribute("href", PDF.download_url);
+    expect(requests.filter((r) => r.path.endsWith("/mom/pdf"))).toHaveLength(1);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("downloads through the attachment link", async () => {
+    mockApi(detailRoutes({ [`POST /api/v1/meetings/${MEETING.id}/mom/pdf`]: { ...PDF, reused: true } }));
+    const clicked: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.href);
+    });
+    renderApp(`/meetings/${MEETING.id}`);
+    const user = userEvent.setup();
+
+    const card = await screen.findByRole("region", { name: "Minutes of Meeting PDF" });
+    await user.click(within(card).getByRole("button", { name: /Download PDF/ }));
+    await waitFor(() => expect(clicked).toEqual([PDF.download_url]));
+    expect(await within(card).findByText(/MOM - Platform sync - 2026-09-10.pdf · 68.9 KB · 2 pages · up to date/)).toBeInTheDocument();
+    click.mockRestore();
+  });
+
+  it("shows the reason when the minutes are not ready", async () => {
+    mockApi(
+      detailRoutes({ [`POST /api/v1/meetings/${MEETING.id}/mom/pdf`]: apiError(409, "minutes_not_ready", "Minutes are available once the meeting has been processed.") }),
+    );
+    renderApp(`/meetings/${MEETING.id}`);
+    const user = userEvent.setup();
+
+    const card = await screen.findByRole("region", { name: "Minutes of Meeting PDF" });
+    await user.click(within(card).getByRole("button", { name: /^View$/ }));
+
+    expect(await within(card).findByRole("alert")).toHaveTextContent("Minutes are available once the meeting has been processed.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
