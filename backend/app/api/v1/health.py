@@ -87,4 +87,9 @@ async def health_deps(
     if not all_healthy:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
-    return {"status": "ok" if all_healthy else "degraded", "checks": checks}
+    return {
+        "status": "ok" if all_healthy else "degraded",
+        # Visible at a glance which S3/DynamoDB this process may talk to.
+        "storage_backend": settings.storage_backend.value,
+        "checks": checks,
+    }

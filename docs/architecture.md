@@ -282,6 +282,7 @@ and validated at start-up.
 |---|---|
 | LLM | `GEMINI_API_KEY`, `GEMINI_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `TRANSCRIPT_MAX_CHARS` |
 | Jobs | `DYNAMODB_JOBS_TABLE`, `DYNAMODB_AUTO_CREATE_TABLES` (false in AWS) |
+| Storage mode | `STORAGE_BACKEND` = `local` (default; local endpoints only, `~/.aws` never read, fails fast) or `aws` (M10, not enabled yet) — ADR 0010 |
 | Storage | `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_PUBLIC_ENDPOINT_URL`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_AUTO_CREATE_BUCKET`, `MEDIA_MAX_BYTES`, `MEDIA_UPLOAD_URL_TTL_SECONDS`, `GEMINI_TRANSCRIPTION_MODEL` |
 | Worker | `WORKER_EMBEDDED`, `WORKER_CONCURRENCY`, `WORKER_POLL_SECONDS`, `JOB_LEASE_SECONDS`, `JOB_MAX_ATTEMPTS`, `JOB_RETRY_BASE_SECONDS`, `JOB_TTL_DAYS` |
 
@@ -330,6 +331,7 @@ and validated at start-up.
 | [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM provider |
 | [0007](adr/0007-structured-extraction-with-deterministic-validation.md) | Structured LLM extraction with deterministic post-processing |
 | [0008](adr/0008-dynamodb-job-queue-with-leased-workers.md) | Background processing on a DynamoDB job queue with leased workers |
+| [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
 | [0009](adr/0009-recording-upload-and-transcription.md) | Presigned-POST uploads, signature validation, RustFS locally, Gemini transcription stage |
 
 Milestone status: [PROJECT_STATUS.md](PROJECT_STATUS.md).

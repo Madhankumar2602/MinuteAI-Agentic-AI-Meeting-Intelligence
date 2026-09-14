@@ -25,6 +25,17 @@
 
 ---
 
+## Storage safety (ADR 0010) — added after the M4 audit
+
+- [x] `STORAGE_BACKEND=local` (default): app refuses to start if any S3/DynamoDB endpoint is empty or not local, or keys are missing
+- [x] All AWS SDK clients built in one module, in an isolated session that never reads `~/.aws` or honours `AWS_PROFILE`
+- [x] Per-request guard: requests to any host other than the configured endpoint are refused before sending
+- [x] `STORAGE_BACKEND=aws` designed but refused until M10
+- [x] 54 tests; each protection mutation-checked. Bug found: `AWS_PROFILE` in the shell crashed local mode (fixed)
+- **Audit result:** no AWS account, resource, or request was used through M4; S3 = local RustFS, DynamoDB = DynamoDB Local
+
+---
+
 ## M4 — completed features (ADR 0009)
 
 - [x] S3-compatible storage locally (RustFS, pinned) after MinIO was withdrawn and LocalStack began requiring a licence token; 12-point compatibility probe

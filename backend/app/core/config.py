@@ -8,10 +8,12 @@ confusing runtime error inside a request handler.
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, SecretStr, computed_field
+from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.aws_clients import StorageBackend, local_endpoint_problem
 
 # config.py -> core -> app -> backend -> <repo root>
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -50,6 +52,12 @@ class Settings(BaseSettings):
     postgres_db_test: str = "minuteai_test"
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+
+    # ---- Storage backend (ADR 0010) ---------------------------------------
+    # Which S3 and DynamoDB the app may talk to. "local" (the default, so a
+    # missing value is safe) allows only local endpoints and never reads
+    # ~/.aws. "aws" is reserved for deployment in M10 and refused until then.
+    storage_backend: StorageBackend = StorageBackend.LOCAL
 
     # ---- DynamoDB ---------------------------------------------------------
     # Empty string means "use the real AWS endpoint" (M10). Locally this points
@@ -112,6 +120,38 @@ class Settings(BaseSettings):
     # Upper bound on accepted transcript size. Protects the database, the LLM
     # quota, and the request body parser from a single oversized upload.
     transcript_max_chars: int = Field(default=400_000, ge=1_000)
+
+    # ---- Validation --------------------------------------------------------
+    @model_validator(mode="after")
+    def _check_storage_backend(self) -> Self:
+        """Fail at start-up, before any request, if the storage target is unsafe."""
+        if self.storage_backend is StorageBackend.AWS:
+            raise ValueError(
+                "STORAGE_BACKEND=aws is reserved for deployment (M10) and is not enabled yet. "
+                "Use STORAGE_BACKEND=local for development."
+            )
+        problems = [
+            local_endpoint_problem(self.s3_endpoint_url, "S3_ENDPOINT_URL"),
+            local_endpoint_problem(self.dynamodb_endpoint_url, "DYNAMODB_ENDPOINT_URL"),
+        ]
+        if self.s3_public_endpoint_url:
+            problems.append(
+                local_endpoint_problem(self.s3_public_endpoint_url, "S3_PUBLIC_ENDPOINT_URL")
+            )
+        if not self.s3_access_key_id or not self.s3_secret_access_key.get_secret_value():
+            problems.append(
+                "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set in local mode "
+                "(otherwise the AWS SDK would fall back to ~/.aws/credentials)."
+            )
+        if not self.aws_access_key_id or not self.aws_secret_access_key:
+            problems.append(
+                "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set for DynamoDB Local "
+                "in local mode (any placeholder value works)."
+            )
+        found = [p for p in problems if p]
+        if found:
+            raise ValueError("Unsafe local storage configuration:\n  - " + "\n  - ".join(found))
+        return self
 
     # ---- Derived values ---------------------------------------------------
     @computed_field  # type: ignore[prop-decorator]

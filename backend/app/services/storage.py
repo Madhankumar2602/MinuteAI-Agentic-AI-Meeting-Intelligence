@@ -26,11 +26,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from starlette.concurrency import run_in_threadpool
 
+from app.core.aws_clients import build_client
 from app.core.config import settings
 from app.core.exceptions import ServiceUnavailableError
 from app.core.logging import get_logger
@@ -73,14 +73,17 @@ def meeting_prefix(*, user_id: uuid.UUID, meeting_id: uuid.UUID) -> str:
     return f"users/{user_id}/meetings/{meeting_id}/"
 
 
-def _client(endpoint: str | None) -> Any:
-    secret = settings.s3_secret_access_key.get_secret_value()
-    return boto3.client(
+def _client(endpoint: str | None, setting_name: str = "S3_ENDPOINT_URL") -> Any:
+    # build_client enforces STORAGE_BACKEND: in local mode the endpoint must be
+    # local, explicit keys are required, and ~/.aws is never read (ADR 0010).
+    return build_client(
         "s3",
-        endpoint_url=endpoint or None,
-        region_name=settings.s3_region,
-        aws_access_key_id=settings.s3_access_key_id or None,
-        aws_secret_access_key=secret or None,
+        backend=settings.storage_backend,
+        endpoint_url=endpoint,
+        region=settings.s3_region,
+        access_key=settings.s3_access_key_id,
+        secret_key=settings.s3_secret_access_key.get_secret_value(),
+        setting_name=setting_name,
         config=Config(
             signature_version="s3v4",
             # Path-style (host/bucket/key) works with S3-compatible servers and
@@ -251,7 +254,7 @@ def _build_storage() -> ObjectStorage:
     internal = settings.s3_endpoint_url or None
     public = settings.s3_public_endpoint_url or internal
     client = _client(internal)
-    signing = client if public == internal else _client(public)
+    signing = client if public == internal else _client(public, "S3_PUBLIC_ENDPOINT_URL")
     return ObjectStorage(client=client, signing_client=signing, bucket=settings.s3_bucket)
 
 

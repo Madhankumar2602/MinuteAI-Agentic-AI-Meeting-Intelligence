@@ -67,6 +67,11 @@ Then edit `.env` and set two values:
 
 `.env` is git-ignored and must never be committed.
 
+Keep `STORAGE_BACKEND=local` for development. In this mode the app will not start
+unless S3 and DynamoDB point at the local containers, and it never reads
+`~/.aws/credentials`, so local work cannot reach a real AWS account
+([ADR 0010](docs/adr/0010-explicit-storage-backend.md)).
+
 ### 2. Start the databases
 
 ```bash

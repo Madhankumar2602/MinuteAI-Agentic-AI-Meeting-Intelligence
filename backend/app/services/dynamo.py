@@ -14,10 +14,10 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
+from app.core.aws_clients import build_client
 from app.core.config import settings
 from app.core.logging import get_logger
 
@@ -34,13 +34,16 @@ def get_dynamodb_client() -> Any:
     Client construction parses config files and is comparatively slow, so it is
     done once per process. Clients are thread-safe for this usage.
     """
-    return boto3.client(
+    # build_client enforces STORAGE_BACKEND (ADR 0010): locally this can only
+    # ever reach DynamoDB Local.
+    return build_client(
         "dynamodb",
-        # Empty endpoint means real AWS (M10); locally it targets the emulator.
-        endpoint_url=settings.dynamodb_endpoint_url or None,
-        region_name=settings.aws_region,
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
+        backend=settings.storage_backend,
+        endpoint_url=settings.dynamodb_endpoint_url,
+        region=settings.aws_region,
+        access_key=settings.aws_access_key_id,
+        secret_key=settings.aws_secret_access_key,
+        setting_name="DYNAMODB_ENDPOINT_URL",
         config=Config(
             retries={"max_attempts": 3, "mode": "standard"},
             connect_timeout=3,
