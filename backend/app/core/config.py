@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     # quota, and the request body parser from a single oversized upload.
     transcript_max_chars: int = Field(default=400_000, ge=1_000)
 
+    # ---- Embeddings (M6, ADR 0012) -----------------------------------------
+    # Runs locally on CPU: transcripts are never sent anywhere to be embedded.
+    # The revision pins the exact model files, so vectors stay comparable across
+    # machines and over time; changing either value makes stored vectors stale.
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model_revision: str = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+    embedding_batch_size: int = Field(default=32, ge=1, le=256)
+
     # ---- Validation --------------------------------------------------------
     @model_validator(mode="after")
     def _check_storage_backend(self) -> Self:

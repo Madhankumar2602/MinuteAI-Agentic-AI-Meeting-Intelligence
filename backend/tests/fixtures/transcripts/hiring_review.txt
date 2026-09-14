@@ -1,0 +1,12 @@
+Leela: Thanks for coming. This is the hiring review for the frontend role.
+Rahul: We interviewed four candidates this week.
+Leela: Who stood out?
+Rahul: Ananya was the strongest. Her React portfolio was excellent and she handled the accessibility questions well.
+Sana: I agree. The second candidate struggled with TypeScript generics.
+Leela: Then let's make an offer to Ananya. Sana, can you check the salary band with HR before Friday?
+Sana: Yes, I will confirm the budget with HR by Friday.
+Rahul: We should also start onboarding planning, laptop, accounts, a buddy.
+Leela: Rahul, please prepare the onboarding checklist for her first week.
+Rahul: Okay, I'll draft it next week.
+Leela: One more thing. The office coffee machine is broken again, facilities are aware.
+Leela: That's all, thanks.

@@ -299,6 +299,7 @@ async def test_worker_transcribes_then_extracts(
         "started",
         "transcription_started",
         "transcription_completed",
+        "indexing_completed",
         "completed",
     ]
 

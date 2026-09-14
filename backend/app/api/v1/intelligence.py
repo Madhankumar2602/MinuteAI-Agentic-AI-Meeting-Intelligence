@@ -35,6 +35,8 @@ from app.schemas.intelligence import (
 from app.schemas.jobs import JobResponse, ProcessSubmissionResponse
 from app.schemas.transcript import TranscriptResponse, TranscriptUpsertRequest
 from app.services.authorization import AccessLevel, authorize_meeting_access
+from app.services.embeddings import EmbeddingProvider, get_embedder
+from app.services.embeddings.indexing import is_index_current
 from app.services.intelligence import is_result_current, require_transcript
 from app.services.job_store import JobStore, get_job_store
 from app.services.llm.base import LLMProvider
@@ -138,6 +140,7 @@ async def process(
     current_user: CurrentUser,
     llm: LLM,
     store: Annotated[JobStore, Depends(get_job_store)],
+    embedder: Annotated[EmbeddingProvider, Depends(get_embedder)],
     force: Annotated[
         bool,
         Query(
@@ -168,6 +171,7 @@ async def process(
         and not active
         and pending_recording is None
         and await is_result_current(db, meeting, model=llm.model)
+        and await is_index_current(db, meeting_id, embedder=embedder)
     ):
         if meeting.status != MeetingStatus.COMPLETED:
             # e.g. a forced re-run failed but the earlier results are still current.

@@ -21,7 +21,7 @@ class JobEvent(BaseModel):
     type: str = Field(
         description=(
             "queued, started, transcription_started, transcription_completed, "
-            "retry_scheduled, lease_expired_requeued, completed, failed"
+            "indexing_completed, retry_scheduled, lease_expired_requeued, completed, failed"
         )
     )
     detail: dict[str, Any] = Field(default_factory=dict)
@@ -31,6 +31,9 @@ class JobResult(BaseModel):
     cached: bool
     # True when this run transcribed a recording before extraction (M4).
     transcribed: bool = False
+    # Transcript chunks in the search index after this run (M6). Absent on
+    # jobs that finished before M6.
+    chunks: int | None = None
     decisions: int
     action_items: int
     participants: int

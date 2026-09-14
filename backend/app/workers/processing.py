@@ -6,7 +6,7 @@ Lifecycle of one job:
                                    │
     worker: claim_next ──► job PROCESSING, lease = now + JOB_LEASE_SECONDS
             heartbeat  ──► lease renewed every lease/3 while running
-            run_extraction (M2 pipeline, unchanged)               (Postgres: PROCESSING)
+            [transcribe] ─► index (chunks + vectors) ─► extract   (Postgres: PROCESSING)
                                    │
           ┌──────── success ───────┼──── transient error ─────┬──── permanent error ────┐
           ▼                        │    attempts remain       ▼                          │
@@ -43,6 +43,8 @@ from app.core.config import settings
 from app.core.exceptions import AppError
 from app.core.logging import configure_logging, get_logger
 from app.db.models import Meeting, MeetingStatus
+from app.services.embeddings.base import EmbeddingProvider, EmbeddingUnavailableError
+from app.services.embeddings.indexing import index_meeting
 from app.services.intelligence import (
     is_result_current,
     result_counts,
@@ -70,6 +72,7 @@ RETRYABLE_ERRORS: tuple[type[BaseException], ...] = (
     LLMUnavailableError,
     JobStoreUnavailableError,
     StorageUnavailableError,
+    EmbeddingUnavailableError,
     OperationalError,
 )
 
@@ -100,6 +103,7 @@ class ProcessingWorker:
         llm_factory: Callable[[], LLMProvider],
         storage: ObjectStorage,
         transcriber_factory: Callable[[], TranscriptionProvider],
+        embedder_factory: Callable[[], EmbeddingProvider],
         concurrency: int = 2,
         poll_seconds: float = 2.0,
         lease_seconds: int = 120,
@@ -111,6 +115,7 @@ class ProcessingWorker:
         self._llm_factory = llm_factory
         self.storage = storage
         self._transcriber_factory = transcriber_factory
+        self._embedder_factory = embedder_factory
         self._concurrency = concurrency
         self._poll_seconds = poll_seconds
         self._lease_seconds = lease_seconds
@@ -282,9 +287,16 @@ class ProcessingWorker:
                         and not job.force
                         and await is_result_current(db, meeting, model=llm.model)
                     ):
+                        # Extraction is current, but the index may not be (a
+                        # meeting processed before M6, or a new embedding model).
+                        # Indexing is a no-op when it is current too.
+                        index = await index_meeting(
+                            db, meeting_id=meeting_id, embedder=self._embedder_factory()
+                        )
                         outcome = await result_counts(db, meeting_id)
+                        result = {**outcome.as_job_result(), "chunks": index.chunks}
                         if await self.store.complete(
-                            job=job, worker_id=self.worker_id, result=outcome.as_job_result()
+                            job=job, worker_id=self.worker_id, result=result
                         ):
                             self.jobs_completed += 1
                             # Recovery set the meeting back to queued; the stored
@@ -314,13 +326,30 @@ class ProcessingWorker:
                             words=transcript.word_count,
                         )
 
-                    # Stage 2: the M2 extraction pipeline, unchanged.
+                    # Stage 2 (M6): chunk and embed locally. Before extraction,
+                    # so the meeting is searchable even if the LLM is unavailable.
+                    index = await index_meeting(
+                        db, meeting_id=meeting_id, embedder=self._embedder_factory()
+                    )
+                    if not index.cached:
+                        await self.store.add_event(
+                            job=job,
+                            worker_id=self.worker_id,
+                            event_type="indexing_completed",
+                            chunks=index.chunks,
+                        )
+
+                    # Stage 3: the M2 extraction pipeline, unchanged.
                     outcome = await run_extraction(db, meeting_id=meeting_id, llm=llm)
                 except Exception as exc:
                     await self._handle_failure(db, job, meeting_id, exc, log_ctx)
                     return
 
-                result = {**outcome.as_job_result(), "transcribed": transcribed}
+                result = {
+                    **outcome.as_job_result(),
+                    "transcribed": transcribed,
+                    "chunks": index.chunks,
+                }
                 if await self.store.complete(job=job, worker_id=self.worker_id, result=result):
                     self.jobs_completed += 1
                 else:
@@ -377,6 +406,7 @@ class ProcessingWorker:
 def build_worker() -> ProcessingWorker:
     """Worker wired to the application's real dependencies."""
     from app.db.session import AsyncSessionLocal
+    from app.services.embeddings import get_embedder
     from app.services.job_store import get_job_store
     from app.services.llm.factory import get_llm_provider, get_transcription_provider
     from app.services.storage import get_storage
@@ -387,6 +417,7 @@ def build_worker() -> ProcessingWorker:
         llm_factory=get_llm_provider,
         storage=get_storage(),
         transcriber_factory=get_transcription_provider,
+        embedder_factory=get_embedder,
         concurrency=settings.worker_concurrency,
         poll_seconds=settings.worker_poll_seconds,
         lease_seconds=settings.job_lease_seconds,

@@ -42,11 +42,12 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.main import app
 from app.services.dynamo import get_dynamodb_client
+from app.services.embeddings import get_embedder
 from app.services.job_store import JobStore, get_job_store
 from app.services.llm.factory import get_llm_provider, get_transcription_provider
 from app.services.storage import ObjectStorage, _client, get_storage
 from app.workers.processing import ProcessingWorker
-from tests.fakes import FakeLLMProvider, FakeTranscriber
+from tests.fakes import FakeEmbedder, FakeLLMProvider, FakeTranscriber
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -187,6 +188,11 @@ def fake_transcriber() -> FakeTranscriber:
 
 
 @pytest.fixture
+def fake_embedder() -> FakeEmbedder:
+    return FakeEmbedder()
+
+
+@pytest.fixture
 def fake_llm() -> FakeLLMProvider:
     """The LLM seen by the app in tests. Tests may reconfigure it before calling."""
     return FakeLLMProvider()
@@ -199,6 +205,7 @@ def worker(
     fake_llm: FakeLLMProvider,
     storage: ObjectStorage,
     fake_transcriber: FakeTranscriber,
+    fake_embedder: FakeEmbedder,
 ) -> ProcessingWorker:
     @asynccontextmanager
     async def shared_session() -> AsyncIterator[AsyncSession]:
@@ -213,6 +220,7 @@ def worker(
         llm_factory=lambda: fake_llm,
         storage=storage,
         transcriber_factory=lambda: fake_transcriber,
+        embedder_factory=lambda: fake_embedder,
         lease_seconds=60,
         retry_base_seconds=30,
         worker_id="test-worker",
@@ -226,6 +234,7 @@ async def client(
     job_store: JobStore,
     storage: ObjectStorage,
     fake_transcriber: FakeTranscriber,
+    fake_embedder: FakeEmbedder,
 ) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client wired to the app: test DB session, fake LLM, test job table."""
 
@@ -237,6 +246,7 @@ async def client(
     app.dependency_overrides[get_job_store] = lambda: job_store
     app.dependency_overrides[get_storage] = lambda: storage
     app.dependency_overrides[get_transcription_provider] = lambda: fake_transcriber
+    app.dependency_overrides[get_embedder] = lambda: fake_embedder
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

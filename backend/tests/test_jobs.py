@@ -109,9 +109,16 @@ async def test_worker_completes_job_and_records_result(
         "action_items": 3,
         "participants": 4,
         "warnings": [],
+        "chunks": 3,  # ~320 words at 160 (fake) tokens per chunk, with overlap
     }
-    assert [e["type"] for e in job["events"]] == ["queued", "started", "completed"]
+    assert [e["type"] for e in job["events"]] == [
+        "queued",
+        "started",
+        "indexing_completed",
+        "completed",
+    ]
     assert job["events"][1]["detail"]["worker_id"] == "test-worker"
+    assert job["events"][2]["detail"]["chunks"] == 3
     assert await _meeting_status(client, meeting["id"], headers) == "completed"
 
 
@@ -145,6 +152,7 @@ async def test_transient_llm_error_is_retried_with_backoff_then_succeeds(
     put_transcript,
     worker,
     fake_llm,
+    fake_embedder,
     clock,
 ) -> None:
     headers, meeting = await _ready_meeting(make_user, auth_headers, create_meeting, put_transcript)
@@ -174,10 +182,12 @@ async def test_transient_llm_error_is_retried_with_backoff_then_succeeds(
     assert [e["type"] for e in job["events"]] == [
         "queued",
         "started",
+        "indexing_completed",
         "retry_scheduled",
-        "started",
+        "started",  # the index is current, so the retry goes straight to extraction
         "completed",
     ]
+    assert fake_embedder.document_calls == [3]  # one batch of 3 chunks across both attempts
     assert await _meeting_status(client, meeting["id"], headers) == "completed"
 
 

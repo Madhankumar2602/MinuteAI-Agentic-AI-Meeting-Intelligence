@@ -27,7 +27,7 @@ async def test_health_deps_reports_postgres_and_dynamodb(client: AsyncClient) ->
     body = response.json()
 
     # "fake" is the test LLM provider's name; in production this key is "gemini".
-    assert set(body["checks"]) == {"postgres", "dynamodb", "s3", "fake"}
+    assert set(body["checks"]) == {"postgres", "dynamodb", "s3", "fake", "embeddings"}
     assert body["checks"]["s3"]["healthy"] is True
     assert body["checks"]["postgres"]["healthy"] is True
     # pgvector must be present - M6 depends on it.

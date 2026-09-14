@@ -181,3 +181,62 @@ class FakeTranscriber:
             latency_ms=7,
             attempts=1,
         )
+
+
+# ---------------------------------------------------------------------------
+# Embeddings (M6)
+# ---------------------------------------------------------------------------
+
+import hashlib  # noqa: E402
+import math  # noqa: E402
+import re  # noqa: E402
+
+_WORDS = re.compile(r"[a-z0-9]+")
+
+
+class FakeEmbedder:
+    """Deterministic bag-of-words vectors: texts sharing words are close.
+
+    Each word is hashed to one of 384 dimensions, so similarity reflects word
+    overlap. That is enough to test ranking, filtering, and access control
+    without loading a model; real semantic behaviour is tested separately
+    against the actual model in ``test_embedding_model.py``.
+    """
+
+    model = "fake-embedder@000000000001"
+    dimensions = 384
+    max_tokens = 256
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.document_calls: list[int] = []
+        self.query_calls = 0
+
+    def count_tokens(self, texts: list[str]) -> list[int]:
+        return [len(t.split()) for t in texts]
+
+    def vector(self, text: str) -> list[float]:
+        v = [0.0] * self.dimensions
+        for word in _WORDS.findall(text.lower()):
+            v[
+                int.from_bytes(hashlib.sha256(word.encode()).digest()[:4], "big") % self.dimensions
+            ] += 1
+        norm = math.sqrt(sum(x * x for x in v))
+        if norm == 0:
+            v[0], norm = 1.0, 1.0
+        return [x / norm for x in v]
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if self.error is not None:
+            raise self.error
+        self.document_calls.append(len(texts))
+        return [self.vector(t) for t in texts]
+
+    async def embed_query(self, text: str) -> list[float]:
+        if self.error is not None:
+            raise self.error
+        self.query_calls += 1
+        return self.vector(text)
+
+    def health_check(self) -> tuple[bool, str]:
+        return True, "fake embedder"
