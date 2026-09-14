@@ -14,6 +14,12 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 class TranscriptSource(enum.StrEnum):
     MANUAL = "manual"  # pasted text          (M2)
     TRANSCRIPTION = "transcription"  # produced from audio  (M4)
+    NOTES = "notes"  # meeting notes / description typed by a person  (M7)
+
+
+# Text a person provided. It always takes precedence over a recording's
+# automatic transcription and is never overwritten by it.
+HUMAN_SOURCES = frozenset({TranscriptSource.MANUAL, TranscriptSource.NOTES})
 
 
 class Transcript(UUIDPrimaryKeyMixin, TimestampMixin, Base):

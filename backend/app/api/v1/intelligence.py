@@ -86,7 +86,9 @@ async def upsert_transcript(
     transcript.char_count = len(payload.content)
     transcript.word_count = len(payload.content.split())
     transcript.language = payload.language
-    transcript.source = TranscriptSource.MANUAL
+    transcript.source = (
+        TranscriptSource.NOTES if payload.kind == "notes" else TranscriptSource.MANUAL
+    )
     # A typed transcript replaces any transcribed one entirely, including its
     # provenance; otherwise it would look as if it came from the recording.
     transcript.media_id = None

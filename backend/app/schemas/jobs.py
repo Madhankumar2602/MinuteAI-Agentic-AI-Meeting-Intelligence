@@ -21,7 +21,7 @@ class JobEvent(BaseModel):
     type: str = Field(
         description=(
             "queued, started, transcription_started, transcription_completed, "
-            "indexing_completed, retry_scheduled, lease_expired_requeued, completed, failed"
+            "indexing_completed, mom_pdf_generated, mom_pdf_failed, retry_scheduled, lease_expired_requeued, completed, failed"
         )
     )
     detail: dict[str, Any] = Field(default_factory=dict)
@@ -34,6 +34,8 @@ class JobResult(BaseModel):
     # Transcript chunks in the search index after this run (M6). Absent on
     # jobs that finished before M6.
     chunks: int | None = None
+    # Whether the Minutes of Meeting PDF was stored (M7). Absent before M7.
+    mom_pdf: bool | None = None
     decisions: int
     action_items: int
     participants: int

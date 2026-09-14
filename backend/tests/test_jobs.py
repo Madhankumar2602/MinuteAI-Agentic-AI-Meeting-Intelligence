@@ -110,11 +110,13 @@ async def test_worker_completes_job_and_records_result(
         "participants": 4,
         "warnings": [],
         "chunks": 3,  # ~320 words at 160 (fake) tokens per chunk, with overlap
+        "mom_pdf": True,  # the Minutes of Meeting PDF was stored (M7)
     }
     assert [e["type"] for e in job["events"]] == [
         "queued",
         "started",
         "indexing_completed",
+        "mom_pdf_generated",
         "completed",
     ]
     assert job["events"][1]["detail"]["worker_id"] == "test-worker"
@@ -185,6 +187,7 @@ async def test_transient_llm_error_is_retried_with_backoff_then_succeeds(
         "indexing_completed",
         "retry_scheduled",
         "started",  # the index is current, so the retry goes straight to extraction
+        "mom_pdf_generated",
         "completed",
     ]
     assert fake_embedder.document_calls == [3]  # one batch of 3 chunks across both attempts

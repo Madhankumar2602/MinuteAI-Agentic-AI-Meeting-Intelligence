@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -20,6 +21,13 @@ class TranscriptUpsertRequest(BaseModel):
         description="Plain-text transcript. Speaker labels such as 'Priya:' improve owner extraction.",
     )
     language: str | None = Field(default=None, max_length=16, examples=["en"])
+    kind: Literal["transcript", "notes"] = Field(
+        default="transcript",
+        description=(
+            "'transcript' for verbatim speech, 'notes' for meeting notes or a written "
+            "description. The AI is told which it is reading."
+        ),
+    )
 
     @field_validator("content")
     @classmethod

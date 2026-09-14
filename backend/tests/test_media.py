@@ -300,6 +300,7 @@ async def test_worker_transcribes_then_extracts(
         "transcription_started",
         "transcription_completed",
         "indexing_completed",
+        "mom_pdf_generated",
         "completed",
     ]
 
@@ -453,7 +454,7 @@ async def test_deleting_a_meeting_removes_all_its_objects(
     await worker.run_once()
     prefix = f"users/{meeting['owner_id']}/meetings/{meeting['id']}/"
     before = await storage._call("list_objects_v2", Bucket=storage.bucket, Prefix=prefix)
-    assert before["KeyCount"] == 2  # the recording and its raw transcript
+    assert before["KeyCount"] == 3  # the recording, its raw transcript, and the MOM PDF
 
     assert (
         await client.delete(f"/api/v1/meetings/{meeting['id']}", headers=headers)
@@ -477,3 +478,96 @@ async def test_other_user_cannot_touch_the_recording(
         await _upload_url(client, meeting["id"], intruder_headers),
     ]
     assert [r.status_code for r in attempts] == [404, 404, 404]
+
+
+# ---------------------------------------------------------------------------
+# Video (M7): the audio track is extracted before transcription
+# ---------------------------------------------------------------------------
+
+
+async def _uploaded_video(client, make_user, auth_headers, create_meeting, content: bytes):
+    user, headers, meeting = await _meeting(make_user, auth_headers, create_meeting)
+    ticket = (
+        await _upload_url(
+            client,
+            meeting["id"],
+            headers,
+            content_type="video/mp4",
+            size=len(content),
+            filename="all-hands.mp4",
+        )
+    ).json()
+    uploaded = await _post_to_storage(ticket, content, content_type="video/mp4")
+    assert uploaded.status_code in (200, 204), uploaded.text
+    done = await _complete(client, meeting["id"], headers, ticket["upload_token"])
+    assert done.status_code == 202, done.text
+    return headers, meeting, done.json()["job"]["job_id"]
+
+
+async def test_video_is_transcribed_from_its_extracted_audio_track(
+    client: AsyncClient, make_user, auth_headers, create_meeting, worker, fake_transcriber
+) -> None:
+    from tests.media_factory import make_video
+
+    video = make_video(seconds=5)
+    headers, meeting, job_id = await _uploaded_video(
+        client, make_user, auth_headers, create_meeting, video
+    )
+
+    await worker.run_once()
+
+    # Gemini receives a small Opus file, never the video itself.
+    [call] = fake_transcriber.calls
+    assert call["mime_type"] == "audio/ogg"
+    assert call["suffix"] == ".ogg"
+    assert call["size"] < len(video)
+
+    job = (await client.get(f"/api/v1/jobs/{job_id}", headers=headers)).json()
+    assert job["status"] == "COMPLETED", job
+    meeting_now = (await client.get(f"/api/v1/meetings/{meeting['id']}", headers=headers)).json()
+    assert meeting_now["source_type"] == "video"
+    transcript = (
+        await client.get(f"/api/v1/meetings/{meeting['id']}/transcript", headers=headers)
+    ).json()
+    assert transcript["duration_seconds"] == 5
+
+
+async def test_video_without_audio_fails_with_a_clear_reason_and_no_llm_call(
+    client: AsyncClient,
+    make_user,
+    auth_headers,
+    create_meeting,
+    worker,
+    fake_transcriber,
+    fake_llm,
+) -> None:
+    from tests.media_factory import make_video
+
+    headers, meeting, job_id = await _uploaded_video(
+        client, make_user, auth_headers, create_meeting, make_video(seconds=2, audio=False)
+    )
+
+    await worker.run_once()
+
+    job = (await client.get(f"/api/v1/jobs/{job_id}", headers=headers)).json()
+    assert job["status"] == "FAILED"  # permanent: retrying cannot add a soundtrack
+    assert job["error"]["code"] == "no_audio_track"
+    assert fake_transcriber.calls == [] and fake_llm.calls == []
+
+
+async def test_typed_notes_also_take_precedence_over_a_recording(
+    client: AsyncClient, make_user, auth_headers, create_meeting
+) -> None:
+    _, headers, meeting = await _meeting(make_user, auth_headers, create_meeting)
+    saved = await client.put(
+        f"/api/v1/meetings/{meeting['id']}/transcript",
+        json={"content": "Budget approved. Leela sends the forecast by Friday.", "kind": "notes"},
+        headers=headers,
+    )
+    assert saved.json()["source"] == "notes"
+    ticket = (await _upload_url(client, meeting["id"], headers)).json()
+    await _post_to_storage(ticket, TINY_WAV)
+
+    refused = await _complete(client, meeting["id"], headers, ticket["upload_token"])
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "manual_transcript_exists"

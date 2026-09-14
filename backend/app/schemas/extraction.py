@@ -57,11 +57,43 @@ class ExtractedActionItem(BaseModel):
     )
 
 
+class ExtractedSpeaker(BaseModel):
+    name: str = Field(description="The speaker's name exactly as it appears in the input.")
+    contribution: str = Field(
+        description="One or two sentences on what this person raised, reported, or committed to."
+    )
+
+
+class ExtractedOpenItem(BaseModel):
+    item: str = Field(
+        description="A question left open, an issue raised but not decided, or deferred work."
+    )
+    evidence_quote: str | None = Field(
+        description="A short verbatim excerpt from the input that shows this item."
+    )
+
+
 class MeetingExtraction(BaseModel):
-    summary: str = Field(description="A concise summary of the meeting in 3 to 6 sentences.")
+    # Field order is generation order: the overview comes first, then details.
+    summary: str = Field(description="An executive summary of the meeting in 3 to 6 sentences.")
     key_points: list[str] = Field(description="The most important discussion points.")
+    # Defaults keep minimal test doubles valid; the extract-v2 prompt asks for
+    # every field.
+    keywords: list[str] = Field(
+        default_factory=list, description="3 to 10 short topic keywords, 1 to 3 words each."
+    )
     participants: list[str] = Field(
         description="Names of the people who spoke or were referred to as attending."
     )
+    speakers: list[ExtractedSpeaker] = Field(
+        default_factory=list, description="What each person who spoke contributed."
+    )
     decisions: list[ExtractedDecision]
     action_items: list[ExtractedActionItem]
+    unresolved_items: list[ExtractedOpenItem] = Field(
+        default_factory=list,
+        description="Open questions, undecided issues, parked topics, and work with no owner.",
+    )
+    next_steps: list[str] = Field(
+        default_factory=list, description="What happens next, as short phrases."
+    )

@@ -5,7 +5,7 @@ When is a recording transcribed?
     uploaded recording?   transcript?                                       →  transcribe?
     no                    -                                                  →  no
     yes                   none                                               →  yes
-    yes                   MANUAL (typed/pasted by a person)                  →  no   ← human input wins
+    yes                   MANUAL or NOTES (typed/pasted by a person)         →  no   ← human input wins
     yes                   TRANSCRIPTION of this exact object (same etag)     →  no   ← cached
     yes                   TRANSCRIPTION of a different/replaced recording    →  yes
 
@@ -16,6 +16,7 @@ same recording never pays for transcription twice.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import tempfile
 import uuid
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.models import (
+    HUMAN_SOURCES,
     Meeting,
     MeetingMedia,
     MeetingStatus,
@@ -36,6 +38,7 @@ from app.db.models import (
 )
 from app.schemas.transcript import MIN_TRANSCRIPT_CHARS
 from app.schemas.transcription import TranscriptionResult
+from app.services.audio import extract_audio, media_duration_seconds
 from app.services.intelligence import MeetingNotFoundError
 from app.services.llm.base import LLMResponseError, TranscriptionProvider
 from app.services.storage import ObjectStorage, raw_transcript_key
@@ -52,7 +55,7 @@ async def media_needing_transcription(
     transcript = await db.scalar(select(Transcript).where(Transcript.meeting_id == meeting_id))
     if transcript is None:
         return media
-    if transcript.source == TranscriptSource.MANUAL:
+    if transcript.source in HUMAN_SOURCES:
         return None
     if transcript.media_id == media.id and transcript.media_etag == media.etag:
         return None
@@ -118,8 +121,26 @@ async def transcribe_meeting(
     with tempfile.TemporaryDirectory(prefix="minuteai-") as tmp:
         local = Path(tmp) / f"recording.{media_key.rsplit('.', 1)[-1]}"
         await storage.download_to_file(media_key, local)
-        duration = wav_duration_seconds(local) if content_type == "audio/wav" else None
-        result = await transcriber.transcribe(audio_path=local, mime_type=content_type)
+        audio_path, audio_mime = local, content_type
+        if content_type.startswith("video/"):
+            # Only the speech is needed for minutes (app/services/audio.py).
+            extracted = await asyncio.to_thread(extract_audio, local, Path(tmp))
+            audio_path, audio_mime = extracted.path, extracted.mime_type
+            duration = extracted.duration_seconds
+            logger.info(
+                "audio extracted from video",
+                extra={
+                    "meeting_id": str(meeting_id),
+                    "video_bytes": local.stat().st_size,
+                    "audio_bytes": extracted.size_bytes,
+                    "duration_s": duration,
+                },
+            )
+        elif content_type == "audio/wav":
+            duration = wav_duration_seconds(local)
+        else:
+            duration = await asyncio.to_thread(media_duration_seconds, local)
+        result = await transcriber.transcribe(audio_path=audio_path, mime_type=audio_mime)
 
     content = render_transcript(result.data)
     if len(content) < MIN_TRANSCRIPT_CHARS:

@@ -42,6 +42,10 @@ dependencies = [
     "tokenizers>=0.20",            # the model's own WordPiece tokenizer
     "huggingface-hub>=0.26",       # fetches model files at a pinned revision
     "numpy>=2.0",
+
+    # --- Core MOM workflow (M7, ADR 0013) ---
+    "av>=14",                      # bundled FFmpeg: audio extraction from video, durations
+    "reportlab>=4.2",              # Minutes of Meeting PDF
 ]
 
 [project.optional-dependencies]
@@ -50,6 +54,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "httpx>=0.27",                 # async test client
     "ruff>=0.6",                   # linter + formatter, replaces black/flake8/isort
+    "pypdf>=5",                    # reads generated PDFs back in tests
 ]
 
 [tool.setuptools.packages.find]

@@ -13,7 +13,13 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from app.schemas.extraction import ExtractedActionItem, ExtractedDecision, MeetingExtraction
+from app.schemas.extraction import (
+    ExtractedActionItem,
+    ExtractedDecision,
+    ExtractedOpenItem,
+    ExtractedSpeaker,
+    MeetingExtraction,
+)
 from app.services.llm.base import LLMUsage, StructuredResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -68,6 +74,33 @@ def platform_sync_extraction() -> MeetingExtraction:
                 evidence_quote="send the quarterly infrastructure cost report to finance by the end of the month",
             ),
         ],
+        keywords=[
+            "PostgreSQL migration",
+            "Authentication",
+            "Blue-green deployment",
+            "authentication",
+        ],
+        speakers=[
+            ExtractedSpeaker(
+                name="Priya", contribution="Chaired the meeting and assigned the follow-ups."
+            ),
+            ExtractedSpeaker(
+                name="Karthik",
+                contribution="Reported staging is on PostgreSQL 16 and owns the runbook.",
+            ),
+            ExtractedSpeaker(name="Meera", contribution="Traced the logouts to clock drift."),
+        ],
+        unresolved_items=[
+            ExtractedOpenItem(
+                item="Whether to move to a different auth provider",
+                evidence_quote="Let's not open that today, it is just an idea for later.",
+            ),
+            ExtractedOpenItem(
+                item="Update the deployment documentation (no owner)",
+                evidence_quote="Somebody needs to update the deployment documentation at some point.",
+            ),
+        ],
+        next_steps=["Production migration on Sunday", "Runbook review before the migration"],
     )
 
 

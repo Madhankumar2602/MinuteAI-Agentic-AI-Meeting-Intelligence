@@ -69,6 +69,10 @@ def raw_transcript_key(*, user_id: uuid.UUID, meeting_id: uuid.UUID, media_id: u
     return f"users/{user_id}/meetings/{meeting_id}/transcript/{media_id}.json"
 
 
+def mom_prefix(*, user_id: uuid.UUID, meeting_id: uuid.UUID) -> str:
+    return f"users/{user_id}/meetings/{meeting_id}/mom/"
+
+
 def meeting_prefix(*, user_id: uuid.UUID, meeting_id: uuid.UUID) -> str:
     return f"users/{user_id}/meetings/{meeting_id}/"
 
@@ -187,9 +191,28 @@ class ObjectStorage:
             url=post["url"], fields=post["fields"], key=key, expires_in=expires_in
         )
 
-    def presigned_download(self, *, key: str, expires_in: int = 900) -> str:
+    def presigned_download(
+        self,
+        *,
+        key: str,
+        expires_in: int = 900,
+        filename: str | None = None,
+        inline: bool = True,
+    ) -> str:
+        """Short-lived GET URL.
+
+        With ``filename``, storage answers with a Content-Disposition header:
+        ``inline`` opens the file in the browser, otherwise it downloads under
+        that name. The header is part of the signature, so it cannot be altered.
+        """
+        params: dict[str, Any] = {"Bucket": self.bucket, "Key": key}
+        if filename:
+            disposition = "inline" if inline else "attachment"
+            params["ResponseContentDisposition"] = (
+                f'{disposition}; filename="{filename}"; filename*=UTF-8{{quote(filename)}}'
+            )
         return self._signing_client.generate_presigned_url(
-            "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=expires_in
+            "get_object", Params=params, ExpiresIn=expires_in
         )
 
     # ------------------------------------------------------------------
@@ -225,6 +248,24 @@ class ObjectStorage:
             Body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             ContentType="application/json",
         )
+
+    async def put_bytes(self, key: str, body: bytes, *, content_type: str) -> None:
+        await self._call(
+            "put_object", Bucket=self.bucket, Key=key, Body=body, ContentType=content_type
+        )
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        keys: list[str] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": self.bucket, "Prefix": prefix}
+            if token:
+                kwargs["ContinuationToken"] = token
+            page = await self._call("list_objects_v2", **kwargs)
+            keys.extend(o["Key"] for o in page.get("Contents", []))
+            if not page.get("IsTruncated"):
+                return keys
+            token = page.get("NextContinuationToken")
 
     async def delete(self, key: str) -> None:
         await self._call("delete_object", Bucket=self.bucket, Key=key)

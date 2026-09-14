@@ -18,8 +18,9 @@ without calling the model.
 
 from __future__ import annotations
 
+import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
 
 from sqlalchemy import delete, func, select, update
@@ -36,6 +37,7 @@ from app.db.models import (
     MeetingStatus,
     MeetingSummary,
     Transcript,
+    TranscriptSource,
     participant_name_key,
 )
 from app.schemas.extraction import MeetingExtraction
@@ -58,6 +60,12 @@ _DEADLINE_TEXT_MAX = 255
 # treated as a mis-resolution (e.g. the model picking the wrong year).
 _MAX_DEADLINE_DAYS_BEFORE_MEETING = 30
 _MAX_DEADLINE_DAYS_AFTER_MEETING = 3 * 365
+
+_MAX_KEYWORDS = 12
+_KEYWORD_MAX = 60
+# "Name: words" - the shape of pasted transcripts and of rendered transcriptions.
+# Same pattern the web app uses to highlight speakers.
+_SPEAKER_LINE = re.compile(r"^([^:\n]{1,40}):(.*)$")
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +93,32 @@ class NormalisedActionItem:
 
 
 @dataclass(slots=True)
+class NormalisedSpeaker:
+    name: str
+    contribution: str | None
+    # Counted from the transcript's speaker lines, not estimated by the model.
+    turns: int
+    words: int
+
+
+@dataclass(slots=True)
+class NormalisedOpenItem:
+    item: str
+    evidence_quote: str | None
+    evidence_verified: bool
+
+
+@dataclass(slots=True)
 class NormalisedExtraction:
     summary: str
     key_points: list[str]
     participants: list[str]  # display names, de-duplicated, extraction order
     decisions: list[NormalisedDecision]
     action_items: list[NormalisedActionItem]
+    keywords: list[str] = field(default_factory=list)
+    speakers: list[NormalisedSpeaker] = field(default_factory=list)
+    unresolved_items: list[NormalisedOpenItem] = field(default_factory=list)
+    next_steps: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -123,8 +151,42 @@ def parse_deadline(raw: str | None, meeting_date: date, warnings: list[str]) -> 
     return parsed
 
 
+def speaker_statistics(transcript: str) -> dict[str, tuple[str, int, int]]:
+    """name_key -> (display name, turns, words) from ``Name: words`` lines.
+
+    Consecutive lines by the same speaker count as one turn.
+    """
+    stats: dict[str, list] = {}
+    previous = None
+    for line in transcript.splitlines():
+        match = _SPEAKER_LINE.match(line.strip())
+        if not match or not (name := _clean(match.group(1), _NAME_MAX)):
+            continue
+        key = participant_name_key(name)
+        entry = stats.setdefault(key, [name, 0, 0])
+        if key != previous:
+            entry[1] += 1
+        entry[2] += len(match.group(2).split())
+        previous = key
+    return {k: (v[0], v[1], v[2]) for k, v in stats.items()}
+
+
+def _dedupe(values: list[str], limit: int | None = None, max_items: int | None = None) -> list[str]:
+    seen: dict[str, str] = {}
+    for value in values:
+        cleaned = _clean(value, limit)
+        if cleaned and cleaned.casefold() not in seen:
+            seen[cleaned.casefold()] = cleaned
+    out = list(seen.values())
+    return out[:max_items] if max_items is not None else out
+
+
 def normalise_extraction(
-    extraction: MeetingExtraction, *, transcript: str, meeting_date: date
+    extraction: MeetingExtraction,
+    *,
+    transcript: str,
+    meeting_date: date,
+    input_kind: str = "transcript",
 ) -> NormalisedExtraction:
     index = TranscriptIndex(transcript)
     warnings: list[str] = []
@@ -166,8 +228,43 @@ def normalise_extraction(
         if cleaned and participant_name_key(cleaned) not in seen:
             seen[participant_name_key(cleaned)] = cleaned
 
-    unverified = sum(not d.evidence_verified for d in decisions) + sum(
-        not a.evidence_verified for a in action_items
+    unresolved = [
+        NormalisedOpenItem(
+            item=text,
+            evidence_quote=_clean(u.evidence_quote),
+            evidence_verified=index.supports(u.evidence_quote),
+        )
+        for u in extraction.unresolved_items
+        if (text := _clean(u.item))
+    ]
+
+    # Speakers: the model's contribution summaries, joined to counts taken from
+    # the transcript itself. Notes have no reliable speaker lines ("Agenda:" is
+    # not a person), so their counts are zero and only named speakers appear.
+    stats = speaker_statistics(transcript) if input_kind == "transcript" else {}
+    speakers: dict[str, NormalisedSpeaker] = {}
+    for s in extraction.speakers:
+        name = _clean(s.name, _NAME_MAX)
+        if not name or participant_name_key(name) in speakers:
+            continue
+        display, turns, words = stats.get(participant_name_key(name), (name, 0, 0))
+        speakers[participant_name_key(name)] = NormalisedSpeaker(
+            name=display, contribution=_clean(s.contribution), turns=turns, words=words
+        )
+    for key, (display, turns, words) in stats.items():
+        if key not in speakers:  # spoke, but the model did not summarise them
+            speakers[key] = NormalisedSpeaker(
+                name=display, contribution=None, turns=turns, words=words
+            )
+    # Participants also include everyone who demonstrably spoke.
+    for display, _, _ in stats.values():
+        if participant_name_key(display) not in seen:
+            seen[participant_name_key(display)] = display
+
+    unverified = (
+        sum(not d.evidence_verified for d in decisions)
+        + sum(not a.evidence_verified for a in action_items)
+        + sum(not u.evidence_verified for u in unresolved)
     )
     if unverified:
         warnings.append(f"{unverified} item(s) cite evidence not found in the transcript")
@@ -178,6 +275,10 @@ def normalise_extraction(
         participants=list(seen.values()),
         decisions=decisions,
         action_items=action_items,
+        keywords=_dedupe(extraction.keywords, _KEYWORD_MAX, _MAX_KEYWORDS),
+        speakers=list(speakers.values()),
+        unresolved_items=unresolved,
+        next_steps=_dedupe(extraction.next_steps),
         warnings=warnings,
     )
 
@@ -329,8 +430,9 @@ async def run_extraction(
 
     # Read what the LLM call needs BEFORE committing: committing releases the
     # pooled connection for the whole (tens of seconds) LLM wait.
-    title, meeting_date = meeting.title, meeting.meeting_date
+    title, meeting_date, agenda = meeting.title, meeting.meeting_date, meeting.description
     content, content_sha = transcript.content, transcript.content_sha256
+    input_kind = "notes" if transcript.source == TranscriptSource.NOTES else "transcript"
 
     meeting.status = MeetingStatus.PROCESSING
     await db.commit()
@@ -340,12 +442,19 @@ async def run_extraction(
         result = await llm.generate_structured(
             system_instruction=EXTRACTION_SYSTEM_INSTRUCTION,
             prompt=build_extraction_prompt(
-                title=title, meeting_date=meeting_date, transcript=content
+                title=title,
+                meeting_date=meeting_date,
+                transcript=content,
+                agenda=agenda,
+                input_kind=input_kind,
             ),
             schema=MeetingExtraction,
         )
         normalised = normalise_extraction(
-            result.data, transcript=content, meeting_date=meeting_date.date()
+            result.data,
+            transcript=content,
+            meeting_date=meeting_date.date(),
+            input_kind=input_kind,
         )
         await _replace_results(db, meeting_id=meeting_id, normalised=normalised)
         db.add(
@@ -353,6 +462,10 @@ async def run_extraction(
                 meeting_id=meeting_id,
                 summary_text=normalised.summary,
                 key_points=normalised.key_points,
+                keywords=normalised.keywords,
+                speakers=[asdict(s) for s in normalised.speakers],
+                unresolved_items=[asdict(u) for u in normalised.unresolved_items],
+                next_steps=normalised.next_steps,
                 provider=result.provider,
                 model=result.model,
                 prompt_version=EXTRACTION_PROMPT_VERSION,

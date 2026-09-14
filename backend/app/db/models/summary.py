@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,24 @@ class MeetingSummary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # A short ordered list. JSONB rather than a child table: it is always read
     # and written as a whole and never queried by element.
     key_points: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+    # --- Minutes of Meeting content (M7) -----------------------------------
+    # Same reasoning as key_points: small, ordered, always read with the summary.
+    keywords: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # [{name, contribution, turns, words}]: turns and words are counted from the
+    # transcript; the contribution comes from the model.
+    speakers: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # [{item, evidence_quote, evidence_verified}]
+    unresolved_items: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    next_steps: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
 
     # --- provenance -------------------------------------------------------
     # Which model, which prompt, and which exact transcript produced this.

@@ -27,11 +27,11 @@ from app.core.exceptions import AppError, ConflictError, NotFoundError
 from app.core.logging import get_logger
 from app.core.security import create_media_upload_token, decode_media_upload_token
 from app.db.models import (
+    HUMAN_SOURCES,
     MeetingMedia,
     MeetingSourceType,
     MeetingStatus,
     Transcript,
-    TranscriptSource,
 )
 from app.schemas.jobs import JobResponse
 from app.schemas.media import (
@@ -155,7 +155,7 @@ async def complete_upload(
     _ensure_not_busy(meeting.status)
 
     transcript = await db.scalar(select(Transcript).where(Transcript.meeting_id == meeting_id))
-    if transcript is not None and transcript.source == TranscriptSource.MANUAL:
+    if transcript is not None and transcript.source in HUMAN_SOURCES:
         if not payload.replace_manual_transcript:
             raise ConflictError(
                 "This meeting already has a typed transcript, which takes precedence over a "
@@ -204,7 +204,7 @@ async def complete_upload(
         original_filename=claims.filename,
     )
     db.add(media)
-    if transcript is not None and transcript.source == TranscriptSource.MANUAL:
+    if transcript is not None and transcript.source in HUMAN_SOURCES:
         await db.execute(delete(Transcript).where(Transcript.id == transcript.id))
     meeting.source_type = (
         MeetingSourceType.VIDEO if fmt.kind == "video" else MeetingSourceType.AUDIO

@@ -6,7 +6,7 @@ Lifecycle of one job:
                                    │
     worker: claim_next ──► job PROCESSING, lease = now + JOB_LEASE_SECONDS
             heartbeat  ──► lease renewed every lease/3 while running
-            [transcribe] ─► index (chunks + vectors) ─► extract   (Postgres: PROCESSING)
+            [transcribe] ─► index ─► extract ─► MOM PDF            (Postgres: PROCESSING)
                                    │
           ┌──────── success ───────┼──── transient error ─────┬──── permanent error ────┐
           ▼                        │    attempts remain       ▼                          │
@@ -58,6 +58,7 @@ from app.services.llm.base import (
     LLMUnavailableError,
     TranscriptionProvider,
 )
+from app.services.mom.documents import ensure_minutes_pdf
 from app.services.storage import ObjectStorage, StorageUnavailableError
 from app.services.transcription import media_needing_transcription, transcribe_meeting
 
@@ -294,7 +295,11 @@ class ProcessingWorker:
                             db, meeting_id=meeting_id, embedder=self._embedder_factory()
                         )
                         outcome = await result_counts(db, meeting_id)
-                        result = {**outcome.as_job_result(), "chunks": index.chunks}
+                        result = {
+                            **outcome.as_job_result(),
+                            "chunks": index.chunks,
+                            "mom_pdf": await self._generate_minutes_pdf(db, job, meeting_id),
+                        }
                         if await self.store.complete(
                             job=job, worker_id=self.worker_id, result=result
                         ):
@@ -345,10 +350,12 @@ class ProcessingWorker:
                     await self._handle_failure(db, job, meeting_id, exc, log_ctx)
                     return
 
+                # Stage 4 (M7): the Minutes of Meeting PDF, the product's output.
                 result = {
                     **outcome.as_job_result(),
                     "transcribed": transcribed,
                     "chunks": index.chunks,
+                    "mom_pdf": await self._generate_minutes_pdf(db, job, meeting_id),
                 }
                 if await self.store.complete(job=job, worker_id=self.worker_id, result=result):
                     self.jobs_completed += 1
@@ -365,6 +372,35 @@ class ProcessingWorker:
             heartbeat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat
+
+    async def _generate_minutes_pdf(
+        self, db: AsyncSession, job: JobRecord, meeting_id: uuid.UUID
+    ) -> bool:
+        """Render and store the MOM PDF. Never fails the job.
+
+        By this point the minutes themselves are committed and complete. A PDF
+        that cannot be stored now (e.g. storage briefly down) is rendered on
+        demand when the user asks for it, so failing or retrying the whole job,
+        and calling the LLM again, would gain nothing.
+        """
+        try:
+            document = await ensure_minutes_pdf(db, meeting_id=meeting_id, storage=self.storage)
+        except Exception:
+            logger.exception("minutes pdf generation failed", extra={"job_id": job.job_id})
+            await db.rollback()
+            await self.store.add_event(
+                job=job, worker_id=self.worker_id, event_type="mom_pdf_failed"
+            )
+            return False
+        if not document.reused:
+            await self.store.add_event(
+                job=job,
+                worker_id=self.worker_id,
+                event_type="mom_pdf_generated",
+                pages=document.pages,
+                bytes=document.size_bytes,
+            )
+        return True
 
     async def _handle_failure(
         self,

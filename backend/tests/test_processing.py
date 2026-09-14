@@ -119,13 +119,14 @@ async def test_processing_extracts_and_persists_everything(
     assert body["status"] == "completed"
     assert len(fake_llm.calls) == 1
 
-    # The prompt carried the meeting date and fenced the transcript.
+    # The prompt carried the meeting date and fenced the transcript as the input.
     prompt = fake_llm.calls[0]["prompt"]
     assert "MEETING DATE: 2026-09-10 (Thursday)" in prompt
-    assert "<<<TRANSCRIPT START>>>" in prompt
+    assert "INPUT TYPE: TRANSCRIPT" in prompt
+    assert "<<<INPUT START>>>" in prompt
 
     summary = body["summary"]
-    assert summary["prompt_version"] == "extract-v1"
+    assert summary["prompt_version"] == "extract-v2"
     assert summary["model"] == "fake-model-1"
     assert summary["is_stale"] is False
 

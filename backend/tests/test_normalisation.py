@@ -158,12 +158,91 @@ def test_bad_fields_are_dropped_individually_not_the_whole_result() -> None:
 
     assert result.summary == "A summary"
     assert result.key_points == ["Real point"]
-    # Case-insensitive de-duplication, plus the owner the model forgot to list.
-    assert result.participants == ["Priya", "Deepa"]
+    # Case-insensitive de-duplication, plus the owner the model forgot to list,
+    # plus everyone who demonstrably spoke in the transcript.
+    assert result.participants == ["Priya", "Deepa", "Arjun", "Karthik", "Meera"]
     # Blank decision and blank task dropped; the rest survives.
     assert [d.decision_text for d in result.decisions] == ["Ship it"]
     assert [a.task for a in result.action_items] == ["Write docs"]
     assert result.action_items[0].deadline is None
     assert result.decisions[0].evidence_verified is False
     assert any("unparseable" in w for w in result.warnings)
+    assert any("evidence not found" in w for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Minutes of Meeting fields (M7)
+# ---------------------------------------------------------------------------
+
+
+def test_mom_fields_are_cleaned_verified_and_joined_to_transcript_counts() -> None:
+    result = normalise_extraction(
+        platform_sync_extraction(), transcript=PLATFORM_SYNC, meeting_date=MEETING_DAY
+    )
+
+    # Case-insensitive de-duplication keeps the first spelling.
+    assert result.keywords == ["PostgreSQL migration", "Authentication", "Blue-green deployment"]
+    assert [u.item for u in result.unresolved_items] == [
+        "Whether to move to a different auth provider",
+        "Update the deployment documentation (no owner)",
+    ]
+    assert all(u.evidence_verified for u in result.unresolved_items)
+    assert result.next_steps == [
+        "Production migration on Sunday",
+        "Runbook review before the migration",
+    ]
+
+    speakers = {s.name: s for s in result.speakers}
+    # Counted from the transcript's "Name:" lines, not estimated by the model.
+    priya_lines = [ln for ln in PLATFORM_SYNC.splitlines() if ln.startswith("Priya:")]
+    assert speakers["Priya"].words == sum(len(ln.split(":", 1)[1].split()) for ln in priya_lines)
+    assert speakers["Priya"].contribution.startswith("Chaired")
+    # Arjun spoke but the model did not summarise him: still listed, with counts.
+    assert speakers["Arjun"].contribution is None and speakers["Arjun"].turns > 0
+    # Model speakers come first, in the model's order.
+    assert [s.name for s in result.speakers][:3] == ["Priya", "Karthik", "Meera"]
+
+
+def test_consecutive_lines_by_one_speaker_are_one_turn() -> None:
+    from app.services.intelligence import speaker_statistics
+
+    stats = speaker_statistics("Priya: one two\nPriya: three\nArjun: four\npriya: five six")
+    assert stats["priya"] == ("Priya", 2, 5)
+    assert stats["arjun"] == ("Arjun", 1, 1)
+
+
+def test_notes_have_no_speaker_counts_so_headings_are_not_people() -> None:
+    notes = "Agenda: budget review\nDecision: approve the Q4 budget\nOwner: Leela to send minutes"
+    extraction = MeetingExtraction(
+        summary="Budget review.",
+        key_points=[],
+        participants=["Leela"],
+        decisions=[],
+        action_items=[],
+    )
+    result = normalise_extraction(
+        extraction, transcript=notes, meeting_date=MEETING_DAY, input_kind="notes"
+    )
+    assert result.speakers == []
+    assert result.participants == ["Leela"]
+
+
+def test_unverified_unresolved_evidence_is_flagged() -> None:
+    from app.schemas.extraction import ExtractedOpenItem
+
+    extraction = MeetingExtraction(
+        summary="s",
+        key_points=[],
+        participants=[],
+        decisions=[],
+        action_items=[],
+        unresolved_items=[
+            ExtractedOpenItem(item="  ", evidence_quote=None),
+            ExtractedOpenItem(item="Budget approval", evidence_quote="not in the transcript"),
+        ],
+    )
+    result = normalise_extraction(extraction, transcript=PLATFORM_SYNC, meeting_date=MEETING_DAY)
+    assert [(u.item, u.evidence_verified) for u in result.unresolved_items] == [
+        ("Budget approval", False)
+    ]
     assert any("evidence not found" in w for w in result.warnings)
