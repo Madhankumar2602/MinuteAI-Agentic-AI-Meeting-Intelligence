@@ -1,0 +1,3058 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "MinuteAI",
+  "description": "AI meeting intelligence: transcription, summarisation, decision and action-item extraction, cross-meeting RAG, and agentic follow-up.",
+  "version": "0.1.0"
+ },
+ "paths": {
+  "/health": {
+   "get": {
+    "tags": [
+     "health"
+    ],
+    "summary": "Liveness probe",
+    "operationId": "health_health_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": {
+          "type": "string"
+         },
+         "type": "object",
+         "title": "Response Health Health Get"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/health/deps": {
+   "get": {
+    "tags": [
+     "health"
+    ],
+    "summary": "Readiness probe - checks backing services",
+    "operationId": "health_deps_health_deps_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object",
+         "title": "Response Health Deps Health Deps Get"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/auth/register": {
+   "post": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Create a new account",
+    "operationId": "register_api_v1_auth_register_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UserRegisterRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/auth/login": {
+   "post": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Exchange credentials for a JWT",
+    "description": "OAuth2 password flow.\n\nThe form field is named ``username`` by the OAuth2 spec; we treat it as the\nemail address. Using the standard form is what lets Swagger UI's Authorize\nbutton work directly against this endpoint.",
+    "operationId": "login_api_v1_auth_login_post",
+    "requestBody": {
+     "content": {
+      "application/x-www-form-urlencoded": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_login_api_v1_auth_login_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TokenResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/auth/me": {
+   "get": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Current authenticated user",
+    "operationId": "me_api_v1_auth_me_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ]
+   }
+  },
+  "/api/v1/meetings": {
+   "post": {
+    "tags": [
+     "meetings"
+    ],
+    "summary": "Create a meeting",
+    "operationId": "create_meeting_api_v1_meetings_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MeetingCreateRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MeetingResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "tags": [
+     "meetings"
+    ],
+    "summary": "List my meetings",
+    "description": "Only the caller's own meetings. The owner filter is not optional.",
+    "operationId": "list_meetings_api_v1_meetings_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "size",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 100,
+       "minimum": 1,
+       "default": 20,
+       "title": "Size"
+      }
+     },
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "$ref": "#/components/schemas/MeetingStatus"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "q",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "maxLength": 100
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Case-insensitive search in title and description.",
+       "title": "Q"
+      },
+      "description": "Case-insensitive search in title and description."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Page_MeetingResponse_"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}": {
+   "get": {
+    "tags": [
+     "meetings"
+    ],
+    "summary": "Get one meeting",
+    "operationId": "get_meeting_api_v1_meetings__meeting_id__get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MeetingResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "patch": {
+    "tags": [
+     "meetings"
+    ],
+    "summary": "Update a meeting",
+    "operationId": "update_meeting_api_v1_meetings__meeting_id__patch",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MeetingUpdateRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MeetingResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "meetings"
+    ],
+    "summary": "Delete a meeting",
+    "operationId": "delete_meeting_api_v1_meetings__meeting_id__delete",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/transcript": {
+   "put": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "Add or replace the meeting transcript",
+    "description": "PUT, not POST: a meeting has exactly one transcript, and sending the same\nbody twice leaves the same state (idempotent).",
+    "operationId": "upsert_transcript_api_v1_meetings__meeting_id__transcript_put",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/TranscriptUpsertRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TranscriptResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "Get the meeting transcript",
+    "operationId": "get_transcript_api_v1_meetings__meeting_id__transcript_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TranscriptResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/process": {
+   "post": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "Queue AI extraction of summary, decisions, and action items",
+    "description": "Returns immediately. Poll ``GET /api/v1/jobs/{job_id}`` for the outcome.\n\nSubmitting again while a job for this meeting is still queued or running\nreturns that same job rather than starting a duplicate.",
+    "operationId": "process_api_v1_meetings__meeting_id__process_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     },
+     {
+      "name": "force",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "description": "Re-run even if the stored result is current. Replaces previous results, including manual status changes on action items.",
+       "default": false,
+       "title": "Force"
+      },
+      "description": "Re-run even if the stored result is current. Replaces previous results, including manual status changes on action items."
+     }
+    ],
+    "responses": {
+     "202": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProcessSubmissionResponse"
+        }
+       }
+      }
+     },
+     "200": {
+      "description": "Stored results are already current; nothing was queued."
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/intelligence": {
+   "get": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "Summary, participants, decisions, and action items in one response",
+    "operationId": "get_intelligence_api_v1_meetings__meeting_id__intelligence_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MeetingIntelligenceResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/summary": {
+   "get": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "Get the AI summary",
+    "operationId": "get_summary_api_v1_meetings__meeting_id__summary_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SummaryResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/decisions": {
+   "get": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "Decisions from this meeting",
+    "operationId": "list_meeting_decisions_api_v1_meetings__meeting_id__decisions_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/DecisionResponse"
+         },
+         "title": "Response List Meeting Decisions Api V1 Meetings  Meeting Id  Decisions Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/action-items": {
+   "get": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "Action items from this meeting",
+    "operationId": "list_meeting_action_items_api_v1_meetings__meeting_id__action_items_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/ActionItemResponse"
+         },
+         "title": "Response List Meeting Action Items Api V1 Meetings  Meeting Id  Action Items Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/participants": {
+   "get": {
+    "tags": [
+     "meeting intelligence"
+    ],
+    "summary": "People named in this meeting",
+    "operationId": "list_participants_api_v1_meetings__meeting_id__participants_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/ParticipantResponse"
+         },
+         "title": "Response List Participants Api V1 Meetings  Meeting Id  Participants Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/action-items": {
+   "get": {
+    "tags": [
+     "action items & decisions"
+    ],
+    "summary": "List my action items across all meetings",
+    "operationId": "list_action_items_api_v1_action_items_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "$ref": "#/components/schemas/ActionItemStatus"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "overdue",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "description": "Only open items whose deadline has passed.",
+       "default": false,
+       "title": "Overdue"
+      },
+      "description": "Only open items whose deadline has passed."
+     },
+     {
+      "name": "meeting_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "uuid"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Meeting Id"
+      }
+     },
+     {
+      "name": "page",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "default": 1,
+       "title": "Page"
+      }
+     },
+     {
+      "name": "size",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 100,
+       "minimum": 1,
+       "default": 50,
+       "title": "Size"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Page_ActionItemResponse_"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/action-items/{action_item_id}": {
+   "patch": {
+    "tags": [
+     "action items & decisions"
+    ],
+    "summary": "Update or correct an action item",
+    "operationId": "update_action_item_api_v1_action_items__action_item_id__patch",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "action_item_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Action Item Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ActionItemUpdateRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ActionItemResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/decisions/{decision_id}": {
+   "patch": {
+    "tags": [
+     "action items & decisions"
+    ],
+    "summary": "Update or correct a decision",
+    "operationId": "update_decision_api_v1_decisions__decision_id__patch",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "decision_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Decision Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DecisionUpdateRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DecisionResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/jobs/{job_id}": {
+   "get": {
+    "tags": [
+     "processing jobs"
+    ],
+    "summary": "Get a processing job",
+    "description": "Poll this after POST /process until ``status`` is COMPLETED or FAILED.",
+    "operationId": "get_job_api_v1_jobs__job_id__get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "job_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Job Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/JobResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/jobs": {
+   "get": {
+    "tags": [
+     "processing jobs"
+    ],
+    "summary": "Processing history for a meeting, newest first",
+    "operationId": "list_meeting_jobs_api_v1_meetings__meeting_id__jobs_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 50,
+       "minimum": 1,
+       "default": 20,
+       "title": "Limit"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/JobResponse"
+         },
+         "title": "Response List Meeting Jobs Api V1 Meetings  Meeting Id  Jobs Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/media/upload-url": {
+   "post": {
+    "tags": [
+     "meeting recording"
+    ],
+    "summary": "Get a direct upload URL",
+    "operationId": "create_upload_url_api_v1_meetings__meeting_id__media_upload_url_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UploadUrlRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UploadUrlResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/media/complete": {
+   "post": {
+    "tags": [
+     "meeting recording"
+    ],
+    "summary": "Confirm an upload and queue transcription + processing",
+    "operationId": "complete_upload_api_v1_meetings__meeting_id__media_complete_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UploadCompleteRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "202": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UploadCompleteResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/meetings/{meeting_id}/media": {
+   "get": {
+    "tags": [
+     "meeting recording"
+    ],
+    "summary": "Get the recording, with a playback URL",
+    "operationId": "get_media_api_v1_meetings__meeting_id__media_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MediaResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "delete": {
+    "tags": [
+     "meeting recording"
+    ],
+    "summary": "Delete the recording",
+    "description": "Removes the recording. A transcript already produced from it is kept.",
+    "operationId": "delete_media_api_v1_meetings__meeting_id__media_delete",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "meeting_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Meeting Id"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/dashboard": {
+   "get": {
+    "tags": [
+     "dashboard"
+    ],
+    "summary": "Counts, recent meetings, and items needing attention",
+    "operationId": "get_dashboard_api_v1_dashboard_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DashboardResponse"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ]
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "ActionItemCounts": {
+    "properties": {
+     "open": {
+      "type": "integer",
+      "title": "Open"
+     },
+     "overdue": {
+      "type": "integer",
+      "title": "Overdue"
+     },
+     "due_soon": {
+      "type": "integer",
+      "title": "Due Soon"
+     },
+     "done": {
+      "type": "integer",
+      "title": "Done"
+     }
+    },
+    "type": "object",
+    "required": [
+     "open",
+     "overdue",
+     "due_soon",
+     "done"
+    ],
+    "title": "ActionItemCounts"
+   },
+   "ActionItemPriority": {
+    "type": "string",
+    "enum": [
+     "low",
+     "medium",
+     "high"
+    ],
+    "title": "ActionItemPriority"
+   },
+   "ActionItemResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "position": {
+      "type": "integer",
+      "title": "Position"
+     },
+     "task": {
+      "type": "string",
+      "title": "Task"
+     },
+     "owner_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Owner Name"
+     },
+     "owner_participant_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Owner Participant Id"
+     },
+     "deadline": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Deadline"
+     },
+     "deadline_text": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Deadline Text"
+     },
+     "priority": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ActionItemPriority"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "status": {
+      "$ref": "#/components/schemas/ActionItemStatus"
+     },
+     "evidence_quote": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Quote"
+     },
+     "evidence_verified": {
+      "type": "boolean",
+      "title": "Evidence Verified"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     },
+     "meeting_title": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting Title"
+     },
+     "is_overdue": {
+      "type": "boolean",
+      "title": "Is Overdue",
+      "readOnly": true
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "meeting_id",
+     "position",
+     "task",
+     "owner_name",
+     "owner_participant_id",
+     "deadline",
+     "deadline_text",
+     "priority",
+     "status",
+     "evidence_quote",
+     "evidence_verified",
+     "created_at",
+     "updated_at",
+     "is_overdue"
+    ],
+    "title": "ActionItemResponse"
+   },
+   "ActionItemStatus": {
+    "type": "string",
+    "enum": [
+     "pending",
+     "in_progress",
+     "done",
+     "cancelled"
+    ],
+    "title": "ActionItemStatus"
+   },
+   "ActionItemUpdateRequest": {
+    "properties": {
+     "task": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 2000,
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Task"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ActionItemStatus"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "deadline": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Deadline"
+     },
+     "priority": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ActionItemPriority"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object",
+    "title": "ActionItemUpdateRequest",
+    "description": "Human corrections to an extracted action item. Every field optional.\n\n``deadline`` and ``priority`` may be set to null deliberately (to clear\nthem); ``task`` and ``status`` may not."
+   },
+   "Body_login_api_v1_auth_login_post": {
+    "properties": {
+     "grant_type": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^password$"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Grant Type"
+     },
+     "username": {
+      "type": "string",
+      "title": "Username"
+     },
+     "password": {
+      "type": "string",
+      "format": "password",
+      "title": "Password"
+     },
+     "scope": {
+      "type": "string",
+      "title": "Scope",
+      "default": ""
+     },
+     "client_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Client Id"
+     },
+     "client_secret": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "format": "password",
+      "title": "Client Secret"
+     }
+    },
+    "type": "object",
+    "required": [
+     "username",
+     "password"
+    ],
+    "title": "Body_login_api_v1_auth_login_post"
+   },
+   "DashboardResponse": {
+    "properties": {
+     "meetings": {
+      "$ref": "#/components/schemas/MeetingCounts"
+     },
+     "action_items": {
+      "$ref": "#/components/schemas/ActionItemCounts"
+     },
+     "recent_meetings": {
+      "items": {
+       "$ref": "#/components/schemas/MeetingResponse"
+      },
+      "type": "array",
+      "title": "Recent Meetings"
+     },
+     "attention": {
+      "items": {
+       "$ref": "#/components/schemas/ActionItemResponse"
+      },
+      "type": "array",
+      "title": "Attention"
+     }
+    },
+    "type": "object",
+    "required": [
+     "meetings",
+     "action_items",
+     "recent_meetings",
+     "attention"
+    ],
+    "title": "DashboardResponse"
+   },
+   "DecisionResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "position": {
+      "type": "integer",
+      "title": "Position"
+     },
+     "decision_text": {
+      "type": "string",
+      "title": "Decision Text"
+     },
+     "context": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Context"
+     },
+     "evidence_quote": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Evidence Quote"
+     },
+     "evidence_verified": {
+      "type": "boolean",
+      "title": "Evidence Verified"
+     },
+     "status": {
+      "$ref": "#/components/schemas/DecisionStatus"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "meeting_id",
+     "position",
+     "decision_text",
+     "context",
+     "evidence_quote",
+     "evidence_verified",
+     "status",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "DecisionResponse"
+   },
+   "DecisionStatus": {
+    "type": "string",
+    "enum": [
+     "open",
+     "resolved",
+     "superseded"
+    ],
+    "title": "DecisionStatus"
+   },
+   "DecisionUpdateRequest": {
+    "properties": {
+     "status": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/DecisionStatus"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "decision_text": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 2000,
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decision Text"
+     }
+    },
+    "type": "object",
+    "title": "DecisionUpdateRequest"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "JobError": {
+    "properties": {
+     "code": {
+      "type": "string",
+      "title": "Code"
+     },
+     "message": {
+      "type": "string",
+      "title": "Message"
+     }
+    },
+    "type": "object",
+    "required": [
+     "code",
+     "message"
+    ],
+    "title": "JobError"
+   },
+   "JobEvent": {
+    "properties": {
+     "at": {
+      "type": "string",
+      "title": "At"
+     },
+     "type": {
+      "type": "string",
+      "title": "Type",
+      "description": "queued, started, transcription_started, transcription_completed, retry_scheduled, lease_expired_requeued, completed, failed"
+     },
+     "detail": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "required": [
+     "at",
+     "type"
+    ],
+    "title": "JobEvent"
+   },
+   "JobResponse": {
+    "properties": {
+     "job_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Job Id"
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "status": {
+      "$ref": "#/components/schemas/JobStatus"
+     },
+     "force": {
+      "type": "boolean",
+      "title": "Force"
+     },
+     "attempts": {
+      "type": "integer",
+      "title": "Attempts"
+     },
+     "max_attempts": {
+      "type": "integer",
+      "title": "Max Attempts"
+     },
+     "created_at": {
+      "type": "string",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "title": "Updated At"
+     },
+     "started_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Started At"
+     },
+     "finished_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finished At"
+     },
+     "next_attempt_at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Next Attempt At",
+      "description": "When a QUEUED job becomes runnable (later than now after a failed attempt)."
+     },
+     "error": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/JobError"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "For FAILED jobs, the final error. For a QUEUED job that already failed once, the error that caused the retry."
+     },
+     "result": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/JobResult"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "events": {
+      "items": {
+       "$ref": "#/components/schemas/JobEvent"
+      },
+      "type": "array",
+      "title": "Events"
+     }
+    },
+    "type": "object",
+    "required": [
+     "job_id",
+     "meeting_id",
+     "status",
+     "force",
+     "attempts",
+     "max_attempts",
+     "created_at",
+     "updated_at",
+     "started_at",
+     "finished_at",
+     "next_attempt_at",
+     "error",
+     "result",
+     "events"
+    ],
+    "title": "JobResponse"
+   },
+   "JobResult": {
+    "properties": {
+     "cached": {
+      "type": "boolean",
+      "title": "Cached"
+     },
+     "transcribed": {
+      "type": "boolean",
+      "title": "Transcribed",
+      "default": false
+     },
+     "decisions": {
+      "type": "integer",
+      "title": "Decisions"
+     },
+     "action_items": {
+      "type": "integer",
+      "title": "Action Items"
+     },
+     "participants": {
+      "type": "integer",
+      "title": "Participants"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Warnings"
+     }
+    },
+    "type": "object",
+    "required": [
+     "cached",
+     "decisions",
+     "action_items",
+     "participants",
+     "warnings"
+    ],
+    "title": "JobResult"
+   },
+   "JobStatus": {
+    "type": "string",
+    "enum": [
+     "QUEUED",
+     "PROCESSING",
+     "COMPLETED",
+     "FAILED"
+    ],
+    "title": "JobStatus"
+   },
+   "MediaResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "content_type": {
+      "type": "string",
+      "title": "Content Type"
+     },
+     "size_bytes": {
+      "type": "integer",
+      "title": "Size Bytes"
+     },
+     "original_filename": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Original Filename"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     },
+     "download_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Download Url",
+      "description": "Short-lived presigned URL for playback."
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "meeting_id",
+     "content_type",
+     "size_bytes",
+     "original_filename",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "MediaResponse"
+   },
+   "MeetingCounts": {
+    "properties": {
+     "total": {
+      "type": "integer",
+      "title": "Total"
+     },
+     "by_status": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "propertyNames": {
+       "$ref": "#/components/schemas/MeetingStatus"
+      },
+      "type": "object",
+      "title": "By Status"
+     }
+    },
+    "type": "object",
+    "required": [
+     "total",
+     "by_status"
+    ],
+    "title": "MeetingCounts"
+   },
+   "MeetingCreateRequest": {
+    "properties": {
+     "title": {
+      "type": "string",
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Title"
+     },
+     "meeting_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Meeting Date"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 5000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "source_type": {
+      "$ref": "#/components/schemas/MeetingSourceType",
+      "default": "text"
+     }
+    },
+    "type": "object",
+    "required": [
+     "title",
+     "meeting_date"
+    ],
+    "title": "MeetingCreateRequest"
+   },
+   "MeetingIntelligenceResponse": {
+    "properties": {
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "status": {
+      "$ref": "#/components/schemas/MeetingStatus"
+     },
+     "cached": {
+      "type": "boolean",
+      "title": "Cached",
+      "description": "True when the stored result was current and no LLM call was made."
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Warnings"
+     },
+     "summary": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SummaryResponse"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "participants": {
+      "items": {
+       "$ref": "#/components/schemas/ParticipantResponse"
+      },
+      "type": "array",
+      "title": "Participants"
+     },
+     "decisions": {
+      "items": {
+       "$ref": "#/components/schemas/DecisionResponse"
+      },
+      "type": "array",
+      "title": "Decisions"
+     },
+     "action_items": {
+      "items": {
+       "$ref": "#/components/schemas/ActionItemResponse"
+      },
+      "type": "array",
+      "title": "Action Items"
+     }
+    },
+    "type": "object",
+    "required": [
+     "meeting_id",
+     "status",
+     "cached",
+     "warnings",
+     "summary",
+     "participants",
+     "decisions",
+     "action_items"
+    ],
+    "title": "MeetingIntelligenceResponse"
+   },
+   "MeetingResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "owner_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Owner Id"
+     },
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "meeting_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Meeting Date"
+     },
+     "source_type": {
+      "$ref": "#/components/schemas/MeetingSourceType"
+     },
+     "status": {
+      "$ref": "#/components/schemas/MeetingStatus"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "owner_id",
+     "title",
+     "description",
+     "meeting_date",
+     "source_type",
+     "status",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "MeetingResponse"
+   },
+   "MeetingSourceType": {
+    "type": "string",
+    "enum": [
+     "text",
+     "audio",
+     "video"
+    ],
+    "title": "MeetingSourceType",
+    "description": "How the meeting content arrived."
+   },
+   "MeetingStatus": {
+    "type": "string",
+    "enum": [
+     "created",
+     "queued",
+     "processing",
+     "completed",
+     "failed"
+    ],
+    "title": "MeetingStatus",
+    "description": "Lifecycle of the AI processing pipeline."
+   },
+   "MeetingUpdateRequest": {
+    "properties": {
+     "title": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 255,
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Title"
+     },
+     "meeting_date": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting Date"
+     },
+     "description": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 5000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "source_type": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/MeetingSourceType"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object",
+    "title": "MeetingUpdateRequest",
+    "description": "Partial update - every field optional.\n\nDistinguishing \"field absent\" from \"field set to null\" is done with\n``model_dump(exclude_unset=True)`` in the route, so PATCH with an empty\nbody is a no-op rather than wiping the record."
+   },
+   "Page_ActionItemResponse_": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/ActionItemResponse"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total",
+      "description": "Total rows matching the filter, ignoring pagination."
+     },
+     "page": {
+      "type": "integer",
+      "minimum": 1.0,
+      "title": "Page"
+     },
+     "size": {
+      "type": "integer",
+      "minimum": 1.0,
+      "title": "Size"
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "total",
+     "page",
+     "size"
+    ],
+    "title": "Page[ActionItemResponse]"
+   },
+   "Page_MeetingResponse_": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/MeetingResponse"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "total": {
+      "type": "integer",
+      "title": "Total",
+      "description": "Total rows matching the filter, ignoring pagination."
+     },
+     "page": {
+      "type": "integer",
+      "minimum": 1.0,
+      "title": "Page"
+     },
+     "size": {
+      "type": "integer",
+      "minimum": 1.0,
+      "title": "Size"
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "total",
+     "page",
+     "size"
+    ],
+    "title": "Page[MeetingResponse]"
+   },
+   "ParticipantResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "display_name": {
+      "type": "string",
+      "title": "Display Name"
+     },
+     "email": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Email"
+     },
+     "user_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "display_name",
+     "email",
+     "user_id"
+    ],
+    "title": "ParticipantResponse"
+   },
+   "ProcessSubmissionResponse": {
+    "properties": {
+     "cached": {
+      "type": "boolean",
+      "title": "Cached"
+     },
+     "meeting_status": {
+      "$ref": "#/components/schemas/MeetingStatus"
+     },
+     "job": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/JobResponse"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "cached",
+     "meeting_status",
+     "job"
+    ],
+    "title": "ProcessSubmissionResponse",
+    "description": "Response to POST /meetings/{id}/process.\n\n* 202 with ``job`` set: work was queued (or an identical job was already\n  active and is returned instead of starting a duplicate).\n* 200 with ``job`` null and ``cached`` true: stored results are already\n  current for this transcript, prompt, and model. Nothing was queued."
+   },
+   "SummaryResponse": {
+    "properties": {
+     "summary_text": {
+      "type": "string",
+      "title": "Summary Text"
+     },
+     "key_points": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Key Points"
+     },
+     "provider": {
+      "type": "string",
+      "title": "Provider"
+     },
+     "model": {
+      "type": "string",
+      "title": "Model"
+     },
+     "prompt_version": {
+      "type": "string",
+      "title": "Prompt Version"
+     },
+     "input_tokens": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Input Tokens"
+     },
+     "output_tokens": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Output Tokens"
+     },
+     "latency_ms": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Latency Ms"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "is_stale": {
+      "type": "boolean",
+      "title": "Is Stale",
+      "description": "True when the transcript has changed since this summary was generated.",
+      "default": false
+     }
+    },
+    "type": "object",
+    "required": [
+     "summary_text",
+     "key_points",
+     "provider",
+     "model",
+     "prompt_version",
+     "input_tokens",
+     "output_tokens",
+     "latency_ms",
+     "created_at"
+    ],
+    "title": "SummaryResponse"
+   },
+   "TokenResponse": {
+    "properties": {
+     "access_token": {
+      "type": "string",
+      "title": "Access Token"
+     },
+     "token_type": {
+      "type": "string",
+      "title": "Token Type",
+      "default": "bearer"
+     },
+     "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Expires At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "access_token",
+     "expires_at"
+    ],
+    "title": "TokenResponse"
+   },
+   "TranscriptResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "content": {
+      "type": "string",
+      "title": "Content"
+     },
+     "content_sha256": {
+      "type": "string",
+      "title": "Content Sha256"
+     },
+     "char_count": {
+      "type": "integer",
+      "title": "Char Count"
+     },
+     "word_count": {
+      "type": "integer",
+      "title": "Word Count"
+     },
+     "language": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Language"
+     },
+     "source": {
+      "$ref": "#/components/schemas/TranscriptSource"
+     },
+     "media_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Media Id"
+     },
+     "transcription_model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Transcription Model"
+     },
+     "duration_seconds": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Duration Seconds"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "meeting_id",
+     "content",
+     "content_sha256",
+     "char_count",
+     "word_count",
+     "language",
+     "source",
+     "media_id",
+     "transcription_model",
+     "duration_seconds",
+     "created_at",
+     "updated_at"
+    ],
+    "title": "TranscriptResponse"
+   },
+   "TranscriptSource": {
+    "type": "string",
+    "enum": [
+     "manual",
+     "transcription"
+    ],
+    "title": "TranscriptSource"
+   },
+   "TranscriptUpsertRequest": {
+    "properties": {
+     "content": {
+      "type": "string",
+      "maxLength": 400000,
+      "minLength": 20,
+      "title": "Content",
+      "description": "Plain-text transcript. Speaker labels such as 'Priya:' improve owner extraction."
+     },
+     "language": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 16
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Language",
+      "examples": [
+       "en"
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "content"
+    ],
+    "title": "TranscriptUpsertRequest"
+   },
+   "UploadCompleteRequest": {
+    "properties": {
+     "upload_token": {
+      "type": "string",
+      "minLength": 10,
+      "title": "Upload Token"
+     },
+     "replace_manual_transcript": {
+      "type": "boolean",
+      "title": "Replace Manual Transcript",
+      "description": "A typed/pasted transcript normally takes precedence over a recording. Set true to discard it and transcribe the recording instead.",
+      "default": false
+     }
+    },
+    "type": "object",
+    "required": [
+     "upload_token"
+    ],
+    "title": "UploadCompleteRequest"
+   },
+   "UploadCompleteResponse": {
+    "properties": {
+     "media": {
+      "$ref": "#/components/schemas/MediaResponse"
+     },
+     "job": {
+      "$ref": "#/components/schemas/JobResponse"
+     }
+    },
+    "type": "object",
+    "required": [
+     "media",
+     "job"
+    ],
+    "title": "UploadCompleteResponse"
+   },
+   "UploadUrlRequest": {
+    "properties": {
+     "filename": {
+      "type": "string",
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Filename",
+      "examples": [
+       "standup-2026-09-10.m4a"
+      ]
+     },
+     "content_type": {
+      "type": "string",
+      "maxLength": 100,
+      "minLength": 3,
+      "title": "Content Type",
+      "examples": [
+       "audio/mp4"
+      ]
+     },
+     "size_bytes": {
+      "type": "integer",
+      "exclusiveMinimum": 0.0,
+      "title": "Size Bytes",
+      "description": "Checked early for a friendly error; storage enforces the real limit."
+     }
+    },
+    "type": "object",
+    "required": [
+     "filename",
+     "content_type",
+     "size_bytes"
+    ],
+    "title": "UploadUrlRequest"
+   },
+   "UploadUrlResponse": {
+    "properties": {
+     "upload_url": {
+      "type": "string",
+      "title": "Upload Url"
+     },
+     "fields": {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "type": "object",
+      "title": "Fields"
+     },
+     "upload_token": {
+      "type": "string",
+      "title": "Upload Token"
+     },
+     "expires_in": {
+      "type": "integer",
+      "title": "Expires In"
+     },
+     "max_bytes": {
+      "type": "integer",
+      "title": "Max Bytes"
+     }
+    },
+    "type": "object",
+    "required": [
+     "upload_url",
+     "fields",
+     "upload_token",
+     "expires_in",
+     "max_bytes"
+    ],
+    "title": "UploadUrlResponse",
+    "description": "Everything the browser needs to upload directly to storage.\n\nSend a multipart/form-data POST to ``upload_url`` containing every entry in\n``fields`` followed by the file under the name ``file``. Then call\n``POST /meetings/{id}/media/complete`` with ``upload_token``."
+   },
+   "UserRegisterRequest": {
+    "properties": {
+     "email": {
+      "type": "string",
+      "format": "email",
+      "title": "Email"
+     },
+     "password": {
+      "type": "string",
+      "maxLength": 128,
+      "minLength": 8,
+      "title": "Password"
+     },
+     "full_name": {
+      "type": "string",
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Full Name"
+     }
+    },
+    "type": "object",
+    "required": [
+     "email",
+     "password",
+     "full_name"
+    ],
+    "title": "UserRegisterRequest"
+   },
+   "UserResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "email": {
+      "type": "string",
+      "format": "email",
+      "title": "Email"
+     },
+     "full_name": {
+      "type": "string",
+      "title": "Full Name"
+     },
+     "is_active": {
+      "type": "boolean",
+      "title": "Is Active"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "email",
+     "full_name",
+     "is_active",
+     "created_at"
+    ],
+    "title": "UserResponse",
+    "description": "Public view of a user. Deliberately has no password_hash field."
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "ctx": {
+      "type": "object",
+      "title": "Context"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   }
+  },
+  "securitySchemes": {
+   "OAuth2PasswordBearer": {
+    "type": "oauth2",
+    "flows": {
+     "password": {
+      "scopes": {},
+      "tokenUrl": "/api/v1/auth/login"
+     }
+    }
+   }
+  }
+ }
+}
