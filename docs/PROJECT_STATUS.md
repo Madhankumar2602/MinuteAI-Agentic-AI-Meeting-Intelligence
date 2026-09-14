@@ -1,8 +1,8 @@
 # MinuteAI — Project Status
 
 **Last updated:** 2026-09-14
-**Current milestone:** M5 — React frontend ✅ **COMPLETE**
-**In progress:** M6 — Embeddings + pgvector
+**Current milestone:** M6 — Embeddings + pgvector ✅ **COMPLETE**
+**In progress:** M7 — Cross-meeting RAG
 
 ---
 
@@ -15,13 +15,57 @@
 | M3 | Async processing + DynamoDB job state | ✅ `v0.3.0` |
 | **M4** | Recordings + S3 + transcription | ✅ `v0.4.0` (S3 local; real AWS S3 in M10) |
 | **M5** | React frontend | ✅ `v0.5.0` |
-| M6 | Embeddings + pgvector | 🔄 In progress |
-| M7 | Cross-meeting RAG | ⬜ Not started |
+| **M6** | Embeddings + pgvector + semantic search | ✅ `v0.6.0` |
+| M7 | Cross-meeting RAG | 🔄 In progress |
 | M8 | Agent automation | ⬜ Not started |
 | M9 | Agent UI + human approval | ⬜ Not started |
 | M10 | AWS deployment | 🔴 Needs AWS account |
 | M11 | Lambda + EventBridge | 🔴 Needs AWS account |
 | M12 | Testing + evaluation + finalisation | ⬜ Not started |
+
+---
+
+## M6 — completed features (ADR 0012)
+
+### Search index
+- [x] `meeting_chunks` table with `vector(384)` and an HNSW cosine index — migration `0005`
+- [x] all-MiniLM-L6-v2 run locally with ONNX Runtime (no PyTorch), pinned to a model commit; **vectors match sentence-transformers to 6.4 × 10⁻⁷**
+- [x] Turn-based chunker: ≤ 160 model tokens, 32-token overlap, exact transcript slices with character offsets, over-long turns split at sentences → words → characters
+- [x] Indexing is a job stage between transcription and extraction; idempotent via transcript sha + model + chunker version; `indexing_completed` event
+- [x] Meetings processed before M6 are indexed on their next submission without a second LLM call
+- [x] Stale chunks (edited transcript) are excluded by the search join, before any re-processing
+- [x] `EmbeddingUnavailableError` is retried like other transient failures
+- [x] `/health/deps` reports the embedding model (loaded / cached / not yet downloaded) without loading it
+
+### Search
+- [x] `GET /api/v1/search?q=&limit=&meeting_id=`: ranking and ownership in one SQL statement; scoped search returns 404 for meetings the user cannot see
+- [x] `SET LOCAL hnsw.iterative_scan = strict_order` so filtered HNSW search cannot silently return too few results
+- [x] Web app: Search page (Ctrl/⌘ K), debounced, URL-synced query, match strength, "Open in transcript" highlights and scrolls to the passage
+
+**Tests:** backend 250 passed, 3 skipped (live, opt-in); frontend 52 passed. Mutation-checked: removing the owner filter, the iterative scan, the stale-chunk join, the API index check, or the worker's cached-path indexing each fails a test; CLS pooling, 128-token truncation, or missing normalisation fail the model parity test.
+
+**Verified live** (real API, Gemini, PostgreSQL, browser):
+- Platform sync processed in 16–18 s: `queued → started → indexing_completed(4) → completed`; hiring review 11–14 s with 2 chunks
+- Query embedding + search 23–71 ms; model load ≈ 1 s on first use
+- "Why do people keep getting signed out?" → the chunk containing "Users are still getting logged out" ranked first (no shared keywords)
+- "Who are we making a job offer to?" / "budget approval for the new hire" → hiring review first
+- Browser: Ctrl+K opens search; results show match strength; "Open in transcript" selected the Transcript tab and highlighted the 8 lines of the passage, scrolled into view
+
+**Retrieval smoke evaluation** (`python -m app.evaluation.retrieval`, 18 paraphrased questions):
+
+| max tokens | chunks | hit@1 | hit@3 | MRR | chance@1 |
+|---|---|---|---|---|---|
+| 64 | 13 | 0.83 | 0.94 | 0.903 | 0.08 |
+| 96 | 9 | 0.78 | 1.00 | 0.852 | 0.12 |
+| **160 (configured)** | 6 | **0.94** | 1.00 | **0.963** | 0.19 |
+| 254 | 4 | 0.94 | 1.00 | 0.972 | 0.29 |
+
+Far above chance at every size, but the corpus is too small to rank sizes (bigger chunks win by default when there are only a few). Proper evaluation is M12.
+
+**Found while building M6:**
+- The model's `tokenizer.json` truncates at **128** tokens; sentence-transformers overrides it to 256. Copying the tokenizer file alone would have silently embedded only the first half of long chunks (caught by the parity test)
+- At small data sizes PostgreSQL filters by owner and sorts exactly instead of using HNSW. The filtered-HNSW failure is real once the index is used: **0 of 3** results without iterative scans, 3 of 3 with them
+- Chunk-level scores are diluted by the other turns in a chunk: the right passage for the sign-out question scored 0.28. Labels were calibrated to that (Strong ≥ 0.45, Good ≥ 0.25); M7 may re-score lines inside top chunks for citations
 
 ---
 
@@ -202,7 +246,9 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | JWT readable by page scripts (sessionStorage) | Medium | httpOnly cookie + CSRF considered at M10 (ADR 0011) |
 | Frontend polls every 2 s while a job is active | Low | Adequate for now; SSE only if needed |
 | Free-tier Gemini content may be used by Google | Medium | Synthetic/consented transcripts only |
-| pgvector on RDS not yet verified | Medium | Before M10 |
+| pgvector on RDS not yet verified (HNSW + `iterative_scan` needs pgvector ≥ 0.8) | Medium | Before M10 |
+| Embedding runs on the API process CPU when the worker is embedded | Low | Standalone worker (ADR 0008) |
+| No bulk re-index command after a model/chunker change (meetings re-index when re-processed) | Low | Add if the model changes |
 
 ---
 
@@ -221,6 +267,7 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | [0009](adr/0009-recording-upload-and-transcription.md) | Presigned-POST uploads, signature validation, Gemini transcription |
 | [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
 | [0011](adr/0011-react-frontend.md) | React SPA, generated API types, sessionStorage token trade-off |
+| [0012](adr/0012-local-embeddings-and-semantic-search.md) | Local embeddings via ONNX Runtime, turn-based chunking, iterative HNSW scans |
 
 ---
 
@@ -239,8 +286,9 @@ Local development only. No cloud resources provisioned.
 
 ## Next
 
-**M6 (embeddings + pgvector)**: chunk transcripts, embed them locally with a
-384-dimension sentence-transformers model, store the vectors in a `meeting_chunks`
-table with an HNSW index, and run embedding as a stage of the existing job.
-No credentials needed. M7 (RAG), M8 and M9 (agent) follow. M10 and M11 need an
-AWS account (Terraform).
+**M7 (cross-meeting RAG)**: `POST /api/v1/ask` retrieves the user's top chunks
+through the M6 search (same ownership join), asks Gemini to answer **only** from
+them with numbered citations, verifies every citation points at a retrieved chunk,
+and refuses when the context does not contain the answer. Web app: the "Ask your
+meetings" page with cited sources linking into transcripts. M8 and M9 (agent)
+follow. M10 and M11 need an AWS account (Terraform).

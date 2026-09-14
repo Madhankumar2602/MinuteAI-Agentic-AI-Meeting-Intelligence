@@ -7,7 +7,7 @@ Turns meeting audio, video, or transcripts into structured, queryable, and
 actionable knowledge: summaries, decisions, action items, cross-meeting
 semantic Q&A, and proactive follow-up detection.
 
-> **Status: M5 — React frontend ✅ complete.** 219 backend tests (+3 opt-in live) and 47 frontend tests passing.
+> **Status: M6 — Embeddings + semantic search ✅ complete.** 250 backend tests (+3 opt-in live) and 52 frontend tests passing.
 > See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
 
 ---
@@ -19,6 +19,7 @@ semantic Q&A, and proactive follow-up detection.
 | API | FastAPI, Python 3.12 | Async, typed, self-documenting |
 | Relational store | PostgreSQL 16 | Source of truth for all business data |
 | Vector search | pgvector (inside PostgreSQL) | Keeps ACL filtering and vectors in one transactional store — [ADR 0002](docs/adr/0002-pgvector-over-dedicated-vector-db.md) |
+| Embeddings | all-MiniLM-L6-v2, run locally with ONNX Runtime | No PyTorch, no external API, identical vectors — [ADR 0012](docs/adr/0012-local-embeddings-and-semantic-search.md) |
 | Workflow state | DynamoDB | Processing-job queue with leases, retries, and TTL — [ADR 0008](docs/adr/0008-dynamodb-job-queue-with-leased-workers.md) |
 | Object storage | Amazon S3 (RustFS locally) | Recordings and raw transcripts; direct browser upload — [ADR 0009](docs/adr/0009-recording-upload-and-transcription.md) |
 | LLM + transcription | Google Gemini *(M2)* | One provider behind a swappable interface — [ADR 0006](docs/adr/0006-gemini-as-initial-llm-provider.md) |
@@ -159,11 +160,17 @@ Run the test suite (from `backend/`):
 pytest
 ```
 
-Expected: `219 passed, 3 skipped`. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
+Expected: `250 passed, 3 skipped`. The first run downloads the embedding model (~90 MB) for `test_embedding_model.py`; later runs use the cache. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
 API and are opt-in:
 
 ```bash
 RUN_LIVE_LLM_TESTS=1 pytest -m live
+```
+
+Retrieval smoke evaluation (offline, real model):
+
+```bash
+python -m app.evaluation.retrieval
 ```
 
 Lint and format:
@@ -303,6 +310,7 @@ python -m app.workers.processing
 | PATCH | `/api/v1/action-items/{id}` | ✔ | Correct task / status / deadline / priority |
 | PATCH | `/api/v1/decisions/{id}` | ✔ | Correct text / status |
 | GET | `/api/v1/dashboard` | ✔ | Counts, recent meetings, action items needing attention |
+| GET | `/api/v1/search` | ✔ | Semantic search over processed transcripts (`q`, `limit`, `meeting_id`) |
 
 Errors share one envelope:
 
@@ -337,7 +345,10 @@ minuteai/
    │  ├─ schemas/            Pydantic request/response models
    │  ├─ api/v1/             routes
    │  ├─ services/           authorization, intelligence, grounding, prompts,
-   │  │                      job_store, dynamo, llm/ (provider contract + Gemini)
+   │  │                      job_store, dynamo, storage, transcription,
+   │  │                      llm/ (provider contract + Gemini),
+   │  │                      embeddings/ (chunking, ONNX model, indexing, search)
+   │  ├─ evaluation/         offline quality checks (retrieval smoke test)
    │  └─ workers/            background processing worker
    └─ tests/
 └─ frontend/
@@ -372,6 +383,8 @@ minuteai/
 | Job stays `QUEUED` forever | No worker running (`WORKER_EMBEDDED=false` without a standalone worker) | Start `python -m app.workers.processing`, or check `worker` in `/health/deps` |
 | `/process` returns 409 `processing_in_progress` on transcript edit | A job is queued or running | Wait for the job to finish |
 | Web app says "Cannot reach the MinuteAI server" | API not running on 8010 | Start uvicorn (step 5) |
+| Job retries with `embedding_unavailable` | The embedding model could not be downloaded (offline, proxy) | Restore network access once; afterwards the cached model works offline |
+| Search returns nothing for a meeting | The meeting has not been processed since M6, or its transcript changed | Process it again (no second LLM call if results are current) |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
 
 ---
@@ -383,7 +396,7 @@ minuteai/
 - **M3** ✅ Async processing — DynamoDB job queue, leased workers, retries, crash recovery
 - **M4** ✅ Recordings — direct S3 upload, signature validation, Gemini transcription
 - **M5** ✅ React UI — dashboard, meetings, live processing, action items, dark mode
-- M6 Embeddings + pgvector
+- **M6** ✅ Semantic search — local embeddings, pgvector HNSW, Search page
 - M7 Cross-meeting RAG
 - M8 Agent (tools, alerts, follow-up drafts)
 - M9 Agent UI + human approval

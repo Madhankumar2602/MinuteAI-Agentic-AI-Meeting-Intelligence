@@ -1,14 +1,14 @@
 # MinuteAI — Architecture
 
 > Living document. Updated as each milestone lands.
-> Current state: **M5 complete**. Sections marked *(planned)* are not built yet.
+> Current state: **M6 complete**. Sections marked *(planned)* are not built yet.
 
 ## 1. System overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  React SPA  (Vite · TypeScript · TanStack Query)   [M5: BUILT]           │
-│  Dashboard · Meetings · Meeting detail · Action items · (Ask M7, Agent M8)│
+│  Dashboard · Meetings · Detail · Action items · Search · (Ask M7, Agent M8)│
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │ HTTPS + JWT Bearer          (POST /process → 202, poll job)
 ┌───────────────▼──────────────────────────────────────────────────────────┐
@@ -16,10 +16,11 @@
 │                                                                          │
 │  middleware  RequestIDMiddleware · CORS                                  │
 │  api/v1      auth · meetings · intelligence · action-items · jobs ·      │
-│              media · dashboard                                           │
+│              media · dashboard · search                                  │
 │  services    authorization · intelligence · grounding · prompts          │
 │              job_store · dynamo · storage · media_validation ·           │
-│              transcription · llm/ (base · gemini · factory)             │
+│              transcription · llm/ (base · gemini · factory) ·            │
+│              embeddings/ (chunking · minilm ONNX · indexing · search)    │
 │  workers     ProcessingWorker — embedded by default, or standalone:      │
 │              python -m app.workers.processing                            │
 └───┬──────────────────────────┬───────────────────────────────┬───────────┘
@@ -34,7 +35,7 @@
 │ action_items,         │  │ (+ agent runs — planned M8)  │  │ S3 (RustFS   │
 │ meeting_participants, │  └──────────────────────────────┘  │ locally)     │
 │ meeting_media         │                                    │ recordings,  │
-│ (+ chunks — planned)  │   browser ──presigned POST────────►│ raw          │
+│ meeting_chunks + HNSW │   browser ──presigned POST────────►│ raw          │
 └───────────────────────┘                                    │ transcripts  │
                                                              └──────────────┘
          EventBridge → Lambda → Agent   (planned, M11)
@@ -58,8 +59,9 @@
 | `app/services/job_store.py` | DynamoDB job queue: submit with lock, claim, lease, requeue, finish, recover | Business data |
 | `app/services/storage.py` | S3: presigned POST with policy, head, ranged read, download, prefix delete | Decide what is valid |
 | `app/services/media_validation.py` | MIME allow-list, file-signature sniffing, filename sanitising | I/O |
+| `app/services/embeddings/` | Turn-based chunking, local MiniLM embeddings (ONNX Runtime), idempotent indexing, owner-filtered HNSW search (ADR 0012) | Call external APIs |
 | `app/services/transcription.py` | When to transcribe (etag rule); download → transcribe → archive raw → store transcript | Queueing |
-| `app/workers/processing.py` | Run jobs: claim → heartbeat → [transcribe] → extract → classify failure → transition | HTTP |
+| `app/workers/processing.py` | Run jobs: claim → heartbeat → [transcribe] → index → extract → classify failure → transition | HTTP |
 | `app/api/v1/` | HTTP contract, status codes, Pydantic validation | Direct SQL against a meeting by id |
 | `app/api/v1/dashboard.py` | One aggregate read for the home page: meeting counts by status, open/overdue/due-soon action items, recent meetings, items needing attention | Mutate anything |
 | `frontend/src/api/` | Typed client (types generated from OpenAPI), 401 → global sign-out, presigned-POST upload with progress | Hold UI state |
@@ -92,7 +94,7 @@ Any `AppError` raised anywhere, including LLM and job-store errors, becomes:
 PUT  /meetings/{id}/transcript
 POST /meetings/{id}/process                                  median 83 ms
   │  authorize (WRITE) → transcript exists? no → 409 transcript_missing
-  │  results current and not force and no active job? → 200 {cached: true, job: null}
+  │  results AND search index current, not force, no active job? → 200 {cached: true, job: null}
   │  DynamoDB TransactWrite: put JOB (QUEUED) + put LOCK#MEETING  IF NOT EXISTS
   │      lock exists → return the active job (no duplicate run)
   │  meeting.status = queued ; worker.notify()
@@ -107,7 +109,8 @@ Worker loop (every 2 s, or immediately on notify)
   ├─ heartbeat: renew lease every lease/3 IF worker_id = me
   ├─ meeting deleted / owner changed → FAILED meeting_not_found
   ├─ results already current (recovered after a late crash) → COMPLETED cached
-  └─ run_extraction (§5)
+  ├─ index_meeting (§5a): chunk + embed, no-op when current → event indexing_completed
+  └─ run_extraction (§6)
        ├─ ok                     → TransactWrite: job COMPLETED + delete lock   → meeting completed
        ├─ transient, attempts left → job QUEUED, retry at 30 s × 4^(n−1)        → meeting queued
        └─ permanent / exhausted  → TransactWrite: job FAILED + delete lock      → meeting failed
@@ -162,6 +165,28 @@ transcription 23–31 s; upload-to-results 47 s. Extraction on the transcribed
 text was fully correct. Known weaknesses of the transcription itself (see
 ADR 0009): two speaker turns misattributed, model timestamps unreliable, name
 spelling varies between runs.
+
+## 5a. Search index (M6 — ADR 0012)
+
+```
+transcript ─► speaker turns ─► split over-long turns (sentences → words → chars)
+           ─► pack ≤ 160 tokens, 32-token overlap      (model tokenizer counts)
+           ─► all-MiniLM-L6-v2 via ONNX Runtime        (mean pool + L2 norm, 384-d)
+           ─► DELETE old chunks + INSERT new, one transaction
+              each row: content slice, char_start/end, tokens,
+                        transcript_sha256, embedding_model@revision, chunker_version
+
+GET /api/v1/search?q=&limit=&meeting_id=
+  embed query (thread) ─► SET LOCAL hnsw.iterative_scan = strict_order, ef_search = 100
+  ─► one SELECT: JOIN meetings (owner = user) JOIN transcripts (sha matches)
+                 ORDER BY embedding <=> query LIMIT k
+```
+
+- Parity with sentence-transformers verified to 6.4 × 10⁻⁷ (fixture vectors).
+- Stale chunks (edited transcript, new model, new chunker) never match the join.
+- Scoped search (`meeting_id`) authorises the meeting first: 404 if not visible.
+- The web app's Search page (Ctrl/⌘ K) links each result to
+  `/meetings/{id}?tab=transcript&from=&to=`, which highlights and scrolls to the passage.
 
 ## 6. Extraction pipeline (M2 — ADR 0007)
 
@@ -228,7 +253,9 @@ round-trip cleanly), original wording kept beside resolved values (`owner_name`,
 
 **DynamoDB** — see §4 and ADR 0008 for the job table design.
 
-**Planned:** `meeting_chunks` with `embedding vector(384)` (M6); `agent_alerts`,
+| `meeting_chunks` (M6) | meeting_id (CASCADE), chunk_index, content, char_start, char_end, token_count, transcript_sha256, embedding_model, chunker_version, embedding `vector(384)` | UNIQUE (meeting_id, chunk_index); HNSW `vector_cosine_ops` |
+
+**Planned:** `agent_alerts`,
 `agent_followups` (M8); `meeting_shares` (ADR 0004).
 
 ## 8. Authentication and authorization
@@ -306,6 +333,7 @@ and validated at start-up.
 
 | Group | Variables |
 |---|---|
+| Embeddings | `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION` (pinned commit), `EMBEDDING_BATCH_SIZE` |
 | LLM | `GEMINI_API_KEY`, `GEMINI_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `TRANSCRIPT_MAX_CHARS` |
 | Jobs | `DYNAMODB_JOBS_TABLE`, `DYNAMODB_AUTO_CREATE_TABLES` (false in AWS) |
 | Storage mode | `STORAGE_BACKEND` = `local` (default; local endpoints only, `~/.aws` never read, fails fast) or `aws` (M10, not enabled yet) — ADR 0010 |
@@ -335,6 +363,10 @@ and validated at start-up.
 | Database integrity | Raw SQL bypassing the app | `test_schema_constraints.py` |
 | Real provider | Opt-in (`RUN_LIVE_LLM_TESTS=1 pytest -m live`) | `tests/live/` |
 | Storage safety | Fake `~/.aws` and `AWS_PROFILE`; AWS endpoints rejected; per-request host guard; AST scan for stray boto3 clients | `test_storage_safety.py` |
+| Chunking | Pure logic with a word counter: slices, budgets, overlap, long turns, CRLF | `test_chunking.py` |
+| Embedding model | **Real model**: parity with sentence-transformers reference vectors, batching, token additivity, chunks fit the model | `test_embedding_model.py` |
+| Search | Indexing via the job, stale chunks hidden, isolation, scoping, retries; **HNSW filtering forced onto the index with an `EXPLAIN` check and a control run** | `test_search.py` |
+| Retrieval quality (smoke) | 18 paraphrased questions, hit@k / MRR vs chance | `python -m app.evaluation.retrieval` |
 | Frontend | Vitest + Testing Library render the real routes with a mocked `fetch`; pure helpers unit-tested | `frontend/src/**/*.test.ts(x)` |
 | Frontend, live | Real browser against the real API, Gemini, and local storage (desktop, dark/light, 375 px mobile) | Manual, recorded in PROJECT_STATUS |
 
@@ -364,5 +396,6 @@ and validated at start-up.
 | [0009](adr/0009-recording-upload-and-transcription.md) | Presigned-POST uploads, signature validation, RustFS locally, Gemini transcription stage |
 | [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
 | [0011](adr/0011-react-frontend.md) | React SPA: generated API types, TanStack Query polling, hand-written design system, sessionStorage token trade-off |
+| [0012](adr/0012-local-embeddings-and-semantic-search.md) | Local MiniLM via ONNX Runtime, turn-based chunks, provenance-checked index, iterative HNSW scans for filtered search |
 
 Milestone status: [PROJECT_STATUS.md](PROJECT_STATUS.md).
