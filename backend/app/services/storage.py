@@ -4,6 +4,7 @@ Key layout, from the architecture review:
 
     users/{user_id}/meetings/{meeting_id}/source/{media_id}.{ext}      uploaded audio/video
     users/{user_id}/meetings/{meeting_id}/transcript/{media_id}.json    raw transcription output
+    users/{user_id}/meetings/{meeting_id}/mom/{fingerprint}.pdf         Minutes of Meeting PDF (M7)
 
 The user id leads the key so one IAM prefix condition can scope access per
 user, and deleting a user's or a meeting's data is a single prefix delete. The
@@ -25,6 +26,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
@@ -209,7 +211,7 @@ class ObjectStorage:
         if filename:
             disposition = "inline" if inline else "attachment"
             params["ResponseContentDisposition"] = (
-                f'{disposition}; filename="{filename}"; filename*=UTF-8{{quote(filename)}}'
+                f"{disposition}; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
             )
         return self._signing_client.generate_presigned_url(
             "get_object", Params=params, ExpiresIn=expires_in

@@ -256,6 +256,10 @@ async def test_processing_stores_the_pdf_and_the_links_serve_it(
     assert (
         'filename="MOM - Platform sync - 2026-09-10.pdf"' in download.headers["content-disposition"]
     )
+    # RFC 6266 / 5987: a plain name plus the percent-encoded UTF-8 name.
+    assert download.headers["content-disposition"].endswith(
+        "filename*=UTF-8''MOM%20-%20Platform%20sync%20-%202026-09-10.pdf"
+    )
     assert view.content == download.content and view.content.startswith(b"%PDF-")
     assert len(view.content) == body["size_bytes"]
 
