@@ -1,8 +1,8 @@
 # MinuteAI — Project Status
 
-**Last updated:** 2026-09-13
-**Current milestone:** M4 — Recordings + S3 + transcription ✅ **COMPLETE**
-**In progress:** M5 — React frontend
+**Last updated:** 2026-09-14
+**Current milestone:** M5 — React frontend ✅ **COMPLETE**
+**In progress:** M6 — Embeddings + pgvector
 
 ---
 
@@ -14,14 +14,50 @@
 | M2 | Text-first AI intelligence — summary, decisions, action items | ✅ `v0.2.0` |
 | M3 | Async processing + DynamoDB job state | ✅ `v0.3.0` |
 | **M4** | Recordings + S3 + transcription | ✅ `v0.4.0` (S3 local; real AWS S3 in M10) |
-| M5 | React frontend | 🔄 In progress |
-| M6 | Embeddings + pgvector | ⬜ Not started |
+| **M5** | React frontend | ✅ `v0.5.0` |
+| M6 | Embeddings + pgvector | 🔄 In progress |
 | M7 | Cross-meeting RAG | ⬜ Not started |
 | M8 | Agent automation | ⬜ Not started |
 | M9 | Agent UI + human approval | ⬜ Not started |
 | M10 | AWS deployment | 🔴 Needs AWS account |
 | M11 | Lambda + EventBridge | 🔴 Needs AWS account |
 | M12 | Testing + evaluation + finalisation | ⬜ Not started |
+
+---
+
+## M5 — completed features (ADR 0011)
+
+### Backend additions
+- [x] `GET /api/v1/dashboard`: meeting counts by status; open / overdue / due-within-7-days / done action items; 5 recent meetings; up to 8 items needing attention
+- [x] `GET /api/v1/meetings?q=`: case-insensitive title/description search; `%`, `_`, `\` matched literally; never crosses users
+- [x] Action items in cross-meeting lists carry `meeting_title` (one join, no N+1)
+
+### Web app (`frontend/`)
+- [x] Vite + React 19 + strict TypeScript; API types generated from OpenAPI (`npm run gen:api`)
+- [x] Sign in / create account (split brand layout); 401 anywhere signs the user out
+- [x] Dashboard: greeting hero, stat cards, "needs attention", recent meetings; auto-refreshes while anything is processing
+- [x] Meetings: debounced search, status filter chips, pagination
+- [x] New meeting: transcript, recording (drag-and-drop, client-side type/size checks, upload progress), or add later
+- [x] Meeting detail: processing stepper driven by real job events (queued → transcribing → analysing → ready/failed, retry back-off shown); tabs Overview / Action items / Decisions / Transcript in the URL; evidence badges; original deadline wording shown; re-run and delete behind confirm dialogs
+- [x] Action items: grouped Overdue / Today / This week / Later / No deadline / Closed; one-click done; status select
+- [x] Light / dark / system theme with no flash on load; toasts; accessible confirm dialog
+- [x] Responsive: off-canvas sidebar and top bar at ≤ 860 px
+- [x] M7 (Ask) and M8 (Agent) shown disabled with their milestone, not faked
+
+**Tests:** backend 219 passed, 3 skipped (live, opt-in); frontend 47 passed (typecheck, oxlint, build clean).
+
+**Verified live in a real browser** (real API, Gemini, DynamoDB Local, RustFS):
+created a meeting from a transcript → stepper and toast → results in tabs; summary
+evidence 4/4 verified; one-click done updated the item and the dashboard counts
+(2 open, 1 completed, 0 overdue); light and dark themes; at 375 px the top bar
+shows, the sidebar is off-screen until opened (then shown with a scrim), no
+horizontal overflow, stats in one column.
+
+**Found while building M5:**
+- A job event with an unknown meeting status crashed the status badge → fallback + test
+- The stepper never showed "Transcribing" when the worker skipped straight to `transcription_started` → fixed
+- "by next Wednesday" said on Monday 14 Sep was resolved to 23 Sep (the model read it as the week after). Ambiguous English; the UI shows the original words beside the date so the user can correct it. To measure in M12
+- Not exercised in the browser: recording upload through the UI (covered by unit tests with a mocked XHR, and the M4 live API test)
 
 ---
 
@@ -163,6 +199,8 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | Re-processing resets manual status changes on action items | Low | ADR 0007; `force=true` required |
 | Evidence verification proves a quote exists, not that it supports the claim | Low | Measure in M12 |
 | No rate limiting on `/auth/login` or `/process` | Medium | Before public deployment (M10) |
+| JWT readable by page scripts (sessionStorage) | Medium | httpOnly cookie + CSRF considered at M10 (ADR 0011) |
+| Frontend polls every 2 s while a job is active | Low | Adequate for now; SSE only if needed |
 | Free-tier Gemini content may be used by Google | Medium | Synthetic/consented transcripts only |
 | pgvector on RDS not yet verified | Medium | Before M10 |
 
@@ -180,6 +218,9 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM provider |
 | [0007](adr/0007-structured-extraction-with-deterministic-validation.md) | Structured extraction with deterministic post-processing |
 | [0008](adr/0008-dynamodb-job-queue-with-leased-workers.md) | DynamoDB job queue with leased workers (refines the review's key design) |
+| [0009](adr/0009-recording-upload-and-transcription.md) | Presigned-POST uploads, signature validation, Gemini transcription |
+| [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
+| [0011](adr/0011-react-frontend.md) | React SPA, generated API types, sessionStorage token trade-off |
 
 ---
 
@@ -187,7 +228,7 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 
 - **Repository:** `C:\Users\madhan\OneDrive\Desktop\adv sql` (snapshot of M1 at `C:\dev\minuteai-BACKUP-2026-09-12`)
 - **Note:** inside OneDrive. If `pip install` fails with a file-lock error, pause OneDrive sync.
-- **Python:** 3.12.10 in `backend/.venv` · **Ports:** Postgres 5432 · DynamoDB Local 8001 · API 8010
+- **Python:** 3.12.10 in `backend/.venv` · **Ports:** Postgres 5432 · DynamoDB Local 8001 · S3 (RustFS) 9000 · API 8010 · Web 5173
 - **LLM:** `gemini-3.6-flash` · **Jobs table (dev):** `minuteai_processing_jobs`
 
 ## Deployment status
@@ -198,11 +239,8 @@ Local development only. No cloud resources provisioned.
 
 ## Next
 
-**M4 (audio + S3 + transcription)** is the next milestone in order. It needs an
-AWS account for S3. Everything else in M4 can be built first: the upload flow,
-audio validation, Gemini transcription (the key already works), the `transcribe`
-pipeline step, and an S3 storage interface. Only the final live S3 wiring waits
-on credentials.
-
-**M5 (frontend)** and **M6 (embeddings + pgvector)** need no credentials at all
-and could be done first.
+**M6 (embeddings + pgvector)**: chunk transcripts, embed them locally with a
+384-dimension sentence-transformers model, store the vectors in a `meeting_chunks`
+table with an HNSW index, and run embedding as a stage of the existing job.
+No credentials needed. M7 (RAG), M8 and M9 (agent) follow. M10 and M11 need an
+AWS account (Terraform).

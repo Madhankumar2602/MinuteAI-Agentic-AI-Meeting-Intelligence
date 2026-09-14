@@ -7,7 +7,7 @@ Turns meeting audio, video, or transcripts into structured, queryable, and
 actionable knowledge: summaries, decisions, action items, cross-meeting
 semantic Q&A, and proactive follow-up detection.
 
-> **Status: M4 — Recordings + S3 + transcription ✅ complete.** 159 tests passing (+3 opt-in live tests).
+> **Status: M5 — React frontend ✅ complete.** 219 backend tests (+3 opt-in live) and 47 frontend tests passing.
 > See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
 
 ---
@@ -23,6 +23,7 @@ semantic Q&A, and proactive follow-up detection.
 | Object storage | Amazon S3 (RustFS locally) | Recordings and raw transcripts; direct browser upload — [ADR 0009](docs/adr/0009-recording-upload-and-transcription.md) |
 | LLM + transcription | Google Gemini *(M2)* | One provider behind a swappable interface — [ADR 0006](docs/adr/0006-gemini-as-initial-llm-provider.md) |
 | Auth | JWT + Argon2id | [ADR 0005](docs/adr/0005-argon2-over-bcrypt.md) |
+| Web app | React 19 + TypeScript + Vite, TanStack Query, API types generated from OpenAPI | [ADR 0011](docs/adr/0011-react-frontend.md) |
 
 Full detail: [docs/architecture.md](docs/architecture.md).
 
@@ -34,9 +35,10 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 |---|---|
 | **Python 3.12** | Not 3.13/3.14 — the M4/M6 ML stack lacks wheels for those. `winget install --id Python.Python.3.12 --exact` |
 | **Docker Desktop** | Must be running before `docker compose up` |
+| **Node.js 20+** | For the web app (tested with npm 11) |
 | **Git** | |
 
-Ports **5432**, **8001**, **8010**, and **9000** must be free.
+Ports **5432**, **8001**, **8010**, **9000**, and **5173** must be free.
 
 > **Windows note:** if Anaconda is installed, `python` on your PATH is probably
 > Anaconda's. Always create the venv with `py -3.12`, never `python -m venv`.
@@ -118,6 +120,20 @@ uvicorn app.main:app --reload --port 8010 --app-dir backend
 
 Open <http://localhost:8010/docs>.
 
+### 6. Run the web app
+
+In a second terminal:
+
+```bash
+npm --prefix frontend install
+```
+```bash
+npm --prefix frontend run dev
+```
+
+Open <http://localhost:5173> and create an account. The dev server proxies
+`/api` and `/health` to the API on port 8010, so the API must be running.
+
 ---
 
 ## Verify the installation
@@ -143,7 +159,7 @@ Run the test suite (from `backend/`):
 pytest
 ```
 
-Expected: `159 passed, 2 skipped`. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
+Expected: `219 passed, 3 skipped`. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
 API and are opt-in:
 
 ```bash
@@ -156,11 +172,32 @@ Lint and format:
 ruff check app tests
 ```
 
+Frontend checks (from `frontend/`):
+
+```bash
+npm run typecheck
+```
+```bash
+npm run lint
+```
+```bash
+npm test
+```
+```bash
+npm run build
+```
+
+After changing the API, regenerate the frontend's types (the backend venv must exist):
+
+```bash
+npm run gen:api
+```
+
 ---
 
 ## Trying it by hand
 
-The quickest path is Swagger at <http://localhost:8010/docs>:
+The quickest path is the web app at <http://localhost:5173>. To drive the API directly, use Swagger at <http://localhost:8010/docs>:
 
 1. `POST /api/v1/auth/register` — create an account.
 2. Click **Authorize** (top right), enter the same email and password.
@@ -239,12 +276,12 @@ python -m app.workers.processing
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/health` | – | Liveness |
-| GET | `/health/deps` | – | Readiness: Postgres, pgvector, DynamoDB |
+| GET | `/health/deps` | – | Readiness: storage mode, Postgres, pgvector, DynamoDB, S3, LLM, worker |
 | POST | `/api/v1/auth/register` | – | Create account |
 | POST | `/api/v1/auth/login` | – | Obtain JWT |
 | GET | `/api/v1/auth/me` | ✔ | Current user |
 | POST | `/api/v1/meetings` | ✔ | Create meeting |
-| GET | `/api/v1/meetings` | ✔ | List own meetings (paginated) |
+| GET | `/api/v1/meetings` | ✔ | List own meetings (paginated; `status`, `q` search) |
 | GET | `/api/v1/meetings/{id}` | ✔ | Get one |
 | PATCH | `/api/v1/meetings/{id}` | ✔ | Partial update |
 | DELETE | `/api/v1/meetings/{id}` | ✔ | Delete (cascades to all derived data) |
@@ -265,6 +302,7 @@ python -m app.workers.processing
 | GET | `/api/v1/action-items` | ✔ | All my action items (`status`, `overdue`, `meeting_id`) |
 | PATCH | `/api/v1/action-items/{id}` | ✔ | Correct task / status / deadline / priority |
 | PATCH | `/api/v1/decisions/{id}` | ✔ | Correct text / status |
+| GET | `/api/v1/dashboard` | ✔ | Counts, recent meetings, action items needing attention |
 
 Errors share one envelope:
 
@@ -302,6 +340,16 @@ minuteai/
    │  │                      job_store, dynamo, llm/ (provider contract + Gemini)
    │  └─ workers/            background processing worker
    └─ tests/
+└─ frontend/
+   ├─ package.json           scripts: dev, build, test, lint, typecheck, gen:api
+   ├─ scripts/gen-api.mjs    OpenAPI → src/api/schema.d.ts
+   └─ src/
+      ├─ api/                typed client, upload with progress, generated schema
+      ├─ auth/               session token + auth context
+      ├─ components/         design-system primitives, stepper, dialogs, rows
+      ├─ lib/                formatting, grouping, theme (pure, unit-tested)
+      ├─ pages/              routes
+      └─ styles.css          design tokens, light/dark themes
 ```
 
 ---
@@ -323,6 +371,7 @@ minuteai/
 | `complete` returns 409 `manual_transcript_exists` | A typed transcript takes precedence | Resend with `replace_manual_transcript: true` |
 | Job stays `QUEUED` forever | No worker running (`WORKER_EMBEDDED=false` without a standalone worker) | Start `python -m app.workers.processing`, or check `worker` in `/health/deps` |
 | `/process` returns 409 `processing_in_progress` on transcript edit | A job is queued or running | Wait for the job to finish |
+| Web app says "Cannot reach the MinuteAI server" | API not running on 8010 | Start uvicorn (step 5) |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
 
 ---
@@ -333,7 +382,7 @@ minuteai/
 - **M2** ✅ Meeting intelligence — Gemini extraction of summary, decisions, action items, with evidence verification
 - **M3** ✅ Async processing — DynamoDB job queue, leased workers, retries, crash recovery
 - **M4** ✅ Recordings — direct S3 upload, signature validation, Gemini transcription
-- M5 React UI
+- **M5** ✅ React UI — dashboard, meetings, live processing, action items, dark mode
 - M6 Embeddings + pgvector
 - M7 Cross-meeting RAG
 - M8 Agent (tools, alerts, follow-up drafts)

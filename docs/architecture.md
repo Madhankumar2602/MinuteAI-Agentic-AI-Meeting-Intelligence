@@ -1,21 +1,22 @@
 # MinuteAI — Architecture
 
 > Living document. Updated as each milestone lands.
-> Current state: **M4 complete**. Sections marked *(planned)* are not built yet.
+> Current state: **M5 complete**. Sections marked *(planned)* are not built yet.
 
 ## 1. System overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  React SPA  (planned, M5)                                                │
-│  Login · Dashboard · Meeting detail · Ask (RAG) · Agent alerts           │
+│  React SPA  (Vite · TypeScript · TanStack Query)   [M5: BUILT]           │
+│  Dashboard · Meetings · Meeting detail · Action items · (Ask M7, Agent M8)│
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │ HTTPS + JWT Bearer          (POST /process → 202, poll job)
 ┌───────────────▼──────────────────────────────────────────────────────────┐
 │  FastAPI process                                  [M1–M4: BUILT]         │
 │                                                                          │
 │  middleware  RequestIDMiddleware · CORS                                  │
-│  api/v1      auth · meetings · intelligence · action-items · jobs · media│
+│  api/v1      auth · meetings · intelligence · action-items · jobs ·      │
+│              media · dashboard                                           │
 │  services    authorization · intelligence · grounding · prompts          │
 │              job_store · dynamo · storage · media_validation ·           │
 │              transcription · llm/ (base · gemini · factory)             │
@@ -60,6 +61,10 @@
 | `app/services/transcription.py` | When to transcribe (etag rule); download → transcribe → archive raw → store transcript | Queueing |
 | `app/workers/processing.py` | Run jobs: claim → heartbeat → [transcribe] → extract → classify failure → transition | HTTP |
 | `app/api/v1/` | HTTP contract, status codes, Pydantic validation | Direct SQL against a meeting by id |
+| `app/api/v1/dashboard.py` | One aggregate read for the home page: meeting counts by status, open/overdue/due-soon action items, recent meetings, items needing attention | Mutate anything |
+| `frontend/src/api/` | Typed client (types generated from OpenAPI), 401 → global sign-out, presigned-POST upload with progress | Hold UI state |
+| `frontend/src/pages/` | Routes: dashboard, meetings (search + status filter), new meeting, meeting detail (tabs in `?tab=`), action items, auth | Talk to storage except through a presigned POST |
+| `frontend/src/components/` | Design-system primitives, processing stepper driven by job events, confirm dialog + toasts | Fetch data themselves (pages own queries) |
 
 ## 3. Request lifecycle
 
@@ -273,6 +278,27 @@ reaches the LLM (tested).
 **Known gaps, deliberately deferred:** no rate limiting on login or `/process`;
 no refresh tokens; no password reset.
 
+## 9a. Frontend (M5 — ADR 0011)
+
+```
+browser ──/api, /health──► Vite dev server :5173 ──proxy──► FastAPI :8010
+   │
+   └── recording ──presigned POST (XHR, progress)──► S3 / RustFS :9000
+```
+
+- **Server state** lives in TanStack Query. Mutations invalidate the affected
+  queries (meeting, intelligence, action items, dashboard).
+- **Polling is conditional.** The meeting and its jobs refetch every 2 s only
+  while the meeting is `queued` or `processing`, and stop once it is done.
+- **Types come from the backend.** `npm run gen:api` exports the FastAPI OpenAPI
+  schema and generates `src/api/schema.d.ts`; `src/api/types.ts` aliases it.
+- **Session.** JWT in memory, mirrored to `sessionStorage`; any `401` signs the
+  user out everywhere. The trade-off against httpOnly cookies is in ADR 0011.
+- **Search.** `GET /meetings?q=` does a case-insensitive `ILIKE` on title and
+  description, with `%`, `_` and `\` escaped so user input is matched literally.
+- **Theme.** `light` / `dark` / `system`, stored in `localStorage`, applied by an
+  inline script before first paint.
+
 ## 10. Configuration
 
 One `.env` at the repository root serves Docker Compose and the backend, typed
@@ -294,6 +320,7 @@ and validated at start-up.
 | 8001 | DynamoDB Local (container port 8000) |
 | 9000 | S3-compatible object storage (RustFS) |
 | 8010 | FastAPI (8000 is occupied by an unrelated local project) |
+| 5173 | Vite dev server (proxies `/api` and `/health` to 8010) |
 
 ## 12. Testing strategy
 
@@ -307,6 +334,9 @@ and validated at start-up.
 | API + worker + DB | Real routes, test PostgreSQL, test DynamoDB table; `FakeLLMProvider`; worker driven explicitly | `test_jobs.py`, `test_processing.py`, `test_action_items.py`, `test_auth.py`, `test_meetings.py`, `test_health.py` |
 | Database integrity | Raw SQL bypassing the app | `test_schema_constraints.py` |
 | Real provider | Opt-in (`RUN_LIVE_LLM_TESTS=1 pytest -m live`) | `tests/live/` |
+| Storage safety | Fake `~/.aws` and `AWS_PROFILE`; AWS endpoints rejected; per-request host guard; AST scan for stray boto3 clients | `test_storage_safety.py` |
+| Frontend | Vitest + Testing Library render the real routes with a mocked `fetch`; pure helpers unit-tested | `frontend/src/**/*.test.ts(x)` |
+| Frontend, live | Real browser against the real API, Gemini, and local storage (desktop, dark/light, 375 px mobile) | Manual, recorded in PROJECT_STATUS |
 
 - PostgreSQL: dedicated `minuteai_test` database, schema from the real
   migrations, each test rolled back via savepoints.
@@ -331,7 +361,8 @@ and validated at start-up.
 | [0006](adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini as the initial LLM provider |
 | [0007](adr/0007-structured-extraction-with-deterministic-validation.md) | Structured LLM extraction with deterministic post-processing |
 | [0008](adr/0008-dynamodb-job-queue-with-leased-workers.md) | Background processing on a DynamoDB job queue with leased workers |
-| [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
 | [0009](adr/0009-recording-upload-and-transcription.md) | Presigned-POST uploads, signature validation, RustFS locally, Gemini transcription stage |
+| [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
+| [0011](adr/0011-react-frontend.md) | React SPA: generated API types, TanStack Query polling, hand-written design system, sessionStorage token trade-off |
 
 Milestone status: [PROJECT_STATUS.md](PROJECT_STATUS.md).

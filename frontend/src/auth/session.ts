@@ -6,7 +6,7 @@
  * localStorage: a sessionStorage token disappears when the tab closes, which
  * narrows the window in which a stolen token is useful. Any script running on
  * the page could still read it; an httpOnly cookie would prevent that at the
- * cost of CSRF defences on the API. That trade-off is recorded in ADR 0010.
+ * cost of CSRF defences on the API. That trade-off is recorded in ADR 0011.
  *
  * Keeping this outside React means the API client reads the current token
  * directly, with no need to re-wire it on every render.
