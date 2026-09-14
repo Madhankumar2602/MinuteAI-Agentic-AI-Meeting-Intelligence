@@ -2,9 +2,61 @@
 
 **Last updated:** 2026-09-14
 **Current milestone:** M6 — Embeddings + pgvector ✅ **COMPLETE**
-**In progress:** M7 — Cross-meeting RAG
+**In progress:** M7 — **Core MOM workflow: structured Minutes of Meeting + PDF** (top priority)
 
 ---
+
+## ⭐ Central product workflow (takes priority over every optional feature)
+
+MinuteAI is judged on one complete user journey, not on milestone names:
+
+```
+Meeting notes / description ─┐
+Transcript ──────────────────┤
+Audio ───────────────────────┼─► Input processing
+Video ── extract audio ──────┘         │
+                                       ▼
+                         Transcription (+ speaker labels) when required
+                                       ▼
+                         Gemini structured extraction
+                                       ▼
+                         Validation & enrichment (grounding, owners,
+                         deadlines, review flags; controlled agent in M9)
+                                       ▼
+                         Minutes of Meeting (MOM) data model
+                                       ▼
+                         Professional PDF ─► stored in S3 ─► view / download
+```
+
+**MVP success criterion:** a user provides notes, a transcript, audio, or video →
+MinuteAI produces a structured MOM → the user views and downloads it as a PDF.
+
+The MOM contains, where the information exists: title, description/agenda, date
+and time, participants, speaker-wise contributions, executive summary, key
+discussion points, keywords/topics, decisions, action items with owner and
+deadline, pending/unresolved items, next steps, and a source/transcript reference.
+
+RAG (M8) and agentic automation (M9) are advanced layers **on top of** this core;
+they must not displace it.
+
+### Gap analysis of M1–M6 against the core workflow (2026-09-14)
+
+| Requirement | State before M7 | Action |
+|---|---|---|
+| Transcript input | ✅ M2 | keep |
+| Audio input | ✅ M4 (upload, validation, Gemini transcription with speaker labels) | keep |
+| Video input | ⚠️ accepted, but the whole video file was sent to Gemini | extract the audio track locally first (smaller upload, no visual data leaves) |
+| Meeting notes / description as input | ⚠️ only by pasting notes as a "transcript"; the model was told it was verbatim speech | add an explicit *notes* input kind; the prompt adapts |
+| Description / agenda used by the AI | ❌ not sent to the model | include as agenda context |
+| Speakers | ⚠️ labels kept in transcript lines; participants listed | add speaker-wise contributions (model) + turn/word counts (computed) |
+| Executive summary, key points, decisions, action items, owner, deadline | ✅ M2 | keep |
+| Keywords/topics | ❌ | add to extraction |
+| Pending / unresolved items | ❌ | add to extraction, evidence-verified |
+| Next steps | ⚠️ UI showed open action items only | add to extraction |
+| Source reference | ⚠️ evidence quotes exist; not assembled into a document | MOM "source" section: input kind, model, prompt version, transcript hash, evidence status |
+| Structured MOM data model | ❌ | one `MinutesOfMeeting` model, shared by API, web view, and PDF |
+| PDF generation, storage, view/download | ❌ | ReportLab PDF, stored in S3, presigned view/download links |
+| Nothing already built needs rewriting | — | job queue, storage safety, embeddings, and UI are reused unchanged |
 
 ## Milestone progress
 
@@ -16,9 +68,9 @@
 | **M4** | Recordings + S3 + transcription | ✅ `v0.4.0` (S3 local; real AWS S3 in M10) |
 | **M5** | React frontend | ✅ `v0.5.0` |
 | **M6** | Embeddings + pgvector + semantic search | ✅ `v0.6.0` |
-| M7 | Cross-meeting RAG | 🔄 In progress |
-| M8 | Agent automation | ⬜ Not started |
-| M9 | Agent UI + human approval | ⬜ Not started |
+| **M7** | **Core MOM workflow — notes/transcript/audio/video → structured MOM → PDF** | 🔄 In progress (priority) |
+| M8 | Cross-meeting RAG | ⬜ Not started |
+| M9 | Agent automation + agent UI + human approval (merged) | ⬜ Not started |
 | M10 | AWS deployment | 🔴 Needs AWS account |
 | M11 | Lambda + EventBridge | 🔴 Needs AWS account |
 | M12 | Testing + evaluation + finalisation | ⬜ Not started |

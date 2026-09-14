@@ -3,6 +3,32 @@
 > Living document. Updated as each milestone lands.
 > Current state: **M6 complete**. Sections marked *(planned)* are not built yet.
 
+## 0. The central product workflow
+
+Everything in this document serves one journey. It has priority over RAG, agent
+automation, and cloud deployment:
+
+```
+notes / description ─┐
+transcript ──────────┤                              ┌─ summary · key points · keywords
+audio ───────────────┼─► input ─► [transcribe] ─► extract ─► validate & enrich ─► MOM ─┤─ speakers · decisions · action items
+video ─► audio track ┘                (speaker labels)   (Gemini)  (deterministic)       │  (owner, deadline) · pending · next steps
+                                                                                         └─ source reference
+                                                                         MOM ─► PDF ─► S3 ─► view / download
+```
+
+| Stage | Where | Milestone |
+|---|---|---|
+| Input: notes, transcript, audio, video | `api/v1/intelligence.py` (text), `api/v1/media.py` (presigned upload) | M2, M4, M7 |
+| Audio extraction from video | `services/transcription.py` (PyAV) | M7 |
+| Transcription with speaker labels | Gemini, `services/transcription.py` | M4 |
+| Structured extraction | Gemini, `services/intelligence.py`, prompt `extract-v2` | M2, M7 |
+| Validation & enrichment | `services/intelligence.py` normalisation, `services/grounding.py`, MOM review flags | M2, M7 (controlled agent: M9) |
+| MOM data model | `services/mom/builder.py` → `schemas/mom.py` | M7 |
+| PDF + storage + download | `services/mom/pdf.py`, `services/mom/documents.py`, `GET/POST /meetings/{id}/mom…` | M7 |
+| Search index (advanced layer) | `services/embeddings/` | M6 |
+| RAG, agent automation (advanced layers) | planned | M8, M9 |
+
 ## 1. System overview
 
 ```
