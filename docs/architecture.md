@@ -1,7 +1,7 @@
 # MinuteAI — Architecture
 
 > Living document. Updated as each milestone lands.
-> Current state: **M6 complete**. Sections marked *(planned)* are not built yet.
+> Current state: **M7 complete** (core MOM workflow). Sections marked *(planned)* are not built yet.
 
 ## 0. The central product workflow
 
@@ -85,9 +85,11 @@ video ─► audio track ┘                (speaker labels)   (Gemini)  (determ
 | `app/services/job_store.py` | DynamoDB job queue: submit with lock, claim, lease, requeue, finish, recover | Business data |
 | `app/services/storage.py` | S3: presigned POST with policy, head, ranged read, download, prefix delete | Decide what is valid |
 | `app/services/media_validation.py` | MIME allow-list, file-signature sniffing, filename sanitising | I/O |
+| `app/services/mom/` | Assemble `MinutesOfMeeting` from stored records, deterministic review flags, ReportLab PDF, content-addressed PDF storage (ADR 0013) | Call the LLM |
+| `app/services/audio.py` | Extract speech-grade audio from video (PyAV), exact durations | Transcribe |
 | `app/services/embeddings/` | Turn-based chunking, local MiniLM embeddings (ONNX Runtime), idempotent indexing, owner-filtered HNSW search (ADR 0012) | Call external APIs |
 | `app/services/transcription.py` | When to transcribe (etag rule); download → transcribe → archive raw → store transcript | Queueing |
-| `app/workers/processing.py` | Run jobs: claim → heartbeat → [transcribe] → index → extract → classify failure → transition | HTTP |
+| `app/workers/processing.py` | Run jobs: claim → heartbeat → [extract audio → transcribe] → index → extract → MOM PDF (non-fatal) → classify failure → transition | HTTP |
 | `app/api/v1/` | HTTP contract, status codes, Pydantic validation | Direct SQL against a meeting by id |
 | `app/api/v1/dashboard.py` | One aggregate read for the home page: meeting counts by status, open/overdue/due-soon action items, recent meetings, items needing attention | Mutate anything |
 | `frontend/src/api/` | Typed client (types generated from OpenAPI), 401 → global sign-out, presigned-POST upload with progress | Hold UI state |
@@ -136,7 +138,8 @@ Worker loop (every 2 s, or immediately on notify)
   ├─ meeting deleted / owner changed → FAILED meeting_not_found
   ├─ results already current (recovered after a late crash) → COMPLETED cached
   ├─ index_meeting (§5a): chunk + embed, no-op when current → event indexing_completed
-  └─ run_extraction (§6)
+  ├─ run_extraction (§6)
+  └─ ensure_minutes_pdf (§6a): build MOM → render → S3 (reuse by fingerprint) → event mom_pdf_generated; never fails the job
        ├─ ok                     → TransactWrite: job COMPLETED + delete lock   → meeting completed
        ├─ transient, attempts left → job QUEUED, retry at 30 s × 4^(n−1)        → meeting queued
        └─ permanent / exhausted  → TransactWrite: job FAILED + delete lock      → meeting failed
@@ -239,6 +242,24 @@ untrusted, output is schema-constrained, and nothing the model returns is
 executed. The fixture's injection line was verified not to become an action
 item.
 
+## 6a. Minutes of Meeting and PDF (M7 — ADR 0013)
+
+```
+GET  /meetings/{id}/mom       ─► build_minutes(): meeting · transcript · recording · summary (+MOM JSONB)
+                                  · participants · decisions · action items (current statuses)
+                                  ─► review_minutes(): owner / deadline / evidence / speakers / stale flags
+POST /meetings/{id}/mom/pdf   ─► fingerprint = sha256(renderer version + MOM JSON)
+                                  key = users/{u}/meetings/{m}/mom/{fingerprint[:32]}.pdf
+                                  exists? reuse : render (ReportLab) → put → delete older PDFs
+                                  ─► presigned view (inline) + download (attachment) URLs, 15 min
+```
+
+- One model feeds the API, the web Minutes tab, and the PDF, so they never disagree.
+- Video → `extract_audio()` → 16 kHz mono Opus → transcription; the provider never
+  receives video frames.
+- All user and model text is escaped before ReportLab markup; DejaVu fonts are
+  embedded for non-Latin-1 names and symbols.
+
 ## 7. Data model
 
 ```
@@ -254,9 +275,9 @@ users 1──N meetings 1──1 transcripts
 |---|---|---|
 | `users` | email (unique), password_hash, is_active | |
 | `meetings` | owner_id → users (CASCADE), meeting_date, source_type, status | status: created / **queued** / processing / completed / failed |
-| `transcripts` | meeting_id (unique), content, content_sha256, counts, source, media_id, media_etag, raw_s3_key, transcription_model, duration_seconds | One per meeting; provenance set only when transcribed |
+| `transcripts` | meeting_id (unique), content, content_sha256, counts, source (manual / notes / transcription), media_id, media_etag, raw_s3_key, transcription_model, duration_seconds | One per meeting; human sources (manual, notes) are never replaced by transcription |
 | `meeting_media` | meeting_id (unique), s3_key, content_type, size_bytes, etag, original_filename | Row exists only for verified uploads |
-| `summaries` | meeting_id (unique), summary_text, key_points (JSONB), provenance | |
+| `summaries` | meeting_id (unique), summary_text, key_points, keywords, speakers, unresolved_items, next_steps (JSONB), provenance | MOM fields added in `0006` (prompt `extract-v2`) |
 | `meeting_participants` | meeting_id, display_name, name_key, user_id (SET NULL) | UNIQUE (meeting_id, name_key) |
 | `decisions` | meeting_id, position, decision_text, evidence_*, status | open / resolved / superseded |
 | `action_items` | meeting_id, task, owner_name, owner_participant_id, deadline, deadline_text, priority, status, evidence_* | pending / in_progress / done / cancelled |
@@ -389,6 +410,8 @@ and validated at start-up.
 | Database integrity | Raw SQL bypassing the app | `test_schema_constraints.py` |
 | Real provider | Opt-in (`RUN_LIVE_LLM_TESTS=1 pytest -m live`) | `tests/live/` |
 | Storage safety | Fake `~/.aws` and `AWS_PROFILE`; AWS endpoints rejected; per-request host guard; AST scan for stray boto3 clients | `test_storage_safety.py` |
+| Audio | Real media built with PyAV: Opus output, exact duration, no-audio video | `test_audio.py` |
+| Minutes + PDF | Real routes, storage, and job; PDFs downloaded through presigned links and read back with pypdf; escaping, fonts, pagination, reuse, cleanup, non-fatal failure, review flags | `test_mom.py` |
 | Chunking | Pure logic with a word counter: slices, budgets, overlap, long turns, CRLF | `test_chunking.py` |
 | Embedding model | **Real model**: parity with sentence-transformers reference vectors, batching, token additivity, chunks fit the model | `test_embedding_model.py` |
 | Search | Indexing via the job, stale chunks hidden, isolation, scoping, retries; **HNSW filtering forced onto the index with an `EXPLAIN` check and a control run** | `test_search.py` |
@@ -423,5 +446,6 @@ and validated at start-up.
 | [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
 | [0011](adr/0011-react-frontend.md) | React SPA: generated API types, TanStack Query polling, hand-written design system, sessionStorage token trade-off |
 | [0012](adr/0012-local-embeddings-and-semantic-search.md) | Local MiniLM via ONNX Runtime, turn-based chunks, provenance-checked index, iterative HNSW scans for filtered search |
+| [0013](adr/0013-minutes-of-meeting-and-pdf.md) | Minutes of Meeting model, deterministic review flags, ReportLab PDF stored by fingerprint, audio extracted from video |
 
 Milestone status: [PROJECT_STATUS.md](PROJECT_STATUS.md).

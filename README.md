@@ -3,11 +3,14 @@
 **Cloud-Based AI Meeting Intelligence and Productivity System using Polyglot
 Persistence with Retrieval-Augmented Generation and Agentic Automation**
 
-Turns meeting audio, video, or transcripts into structured, queryable, and
-actionable knowledge: summaries, decisions, action items, cross-meeting
-semantic Q&A, and proactive follow-up detection.
+Give it meeting notes, a transcript, an audio recording, or a video. MinuteAI
+produces **structured Minutes of Meeting**: executive summary, discussion points,
+keywords, speaker contributions, decisions, action items with owners and
+deadlines, pending items, next steps, and a source reference. You get them as a
+**professional PDF** to view or download. Semantic search, cross-meeting Q&A,
+and proactive follow-ups build on top.
 
-> **Status: M6 — Embeddings + semantic search ✅ complete.** 250 backend tests (+3 opt-in live) and 52 frontend tests passing.
+> **Status: M7 — Core workflow ✅ complete: notes / transcript / audio / video → structured Minutes of Meeting → PDF.** 278 backend tests (+3 opt-in live) and 58 frontend tests passing.
 > See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
 
 ---
@@ -19,6 +22,8 @@ semantic Q&A, and proactive follow-up detection.
 | API | FastAPI, Python 3.12 | Async, typed, self-documenting |
 | Relational store | PostgreSQL 16 | Source of truth for all business data |
 | Vector search | pgvector (inside PostgreSQL) | Keeps ACL filtering and vectors in one transactional store — [ADR 0002](docs/adr/0002-pgvector-over-dedicated-vector-db.md) |
+| Minutes PDF | ReportLab, stored in S3 | One minutes model for API, web, and PDF — [ADR 0013](docs/adr/0013-minutes-of-meeting-and-pdf.md) |
+| Video → audio | PyAV (bundled FFmpeg) | Only speech is sent for transcription |
 | Embeddings | all-MiniLM-L6-v2, run locally with ONNX Runtime | No PyTorch, no external API, identical vectors — [ADR 0012](docs/adr/0012-local-embeddings-and-semantic-search.md) |
 | Workflow state | DynamoDB | Processing-job queue with leases, retries, and TTL — [ADR 0008](docs/adr/0008-dynamodb-job-queue-with-leased-workers.md) |
 | Object storage | Amazon S3 (RustFS locally) | Recordings and raw transcripts; direct browser upload — [ADR 0009](docs/adr/0009-recording-upload-and-transcription.md) |
@@ -160,7 +165,7 @@ Run the test suite (from `backend/`):
 pytest
 ```
 
-Expected: `250 passed, 3 skipped`. The first run downloads the embedding model (~90 MB) for `test_embedding_model.py`; later runs use the cache. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
+Expected: `278 passed, 3 skipped`. The first run downloads the embedding model (~90 MB) for `test_embedding_model.py`; later runs use the cache. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
 API and are opt-in:
 
 ```bash
@@ -292,7 +297,7 @@ python -m app.workers.processing
 | GET | `/api/v1/meetings/{id}` | ✔ | Get one |
 | PATCH | `/api/v1/meetings/{id}` | ✔ | Partial update |
 | DELETE | `/api/v1/meetings/{id}` | ✔ | Delete (cascades to all derived data) |
-| PUT | `/api/v1/meetings/{id}/transcript` | ✔ | Add or replace the transcript |
+| PUT | `/api/v1/meetings/{id}/transcript` | ✔ | Add or replace the transcript or meeting notes (`kind`: `transcript` / `notes`) |
 | GET | `/api/v1/meetings/{id}/transcript` | ✔ | Get the transcript |
 | POST | `/api/v1/meetings/{id}/process` | ✔ | Queue AI extraction → 202 + job (`?force=true` to re-run) |
 | GET | `/api/v1/jobs/{job_id}` | ✔ | Poll a processing job |
@@ -311,6 +316,8 @@ python -m app.workers.processing
 | PATCH | `/api/v1/decisions/{id}` | ✔ | Correct text / status |
 | GET | `/api/v1/dashboard` | ✔ | Counts, recent meetings, action items needing attention |
 | GET | `/api/v1/search` | ✔ | Semantic search over processed transcripts (`q`, `limit`, `meeting_id`) |
+| GET | `/api/v1/meetings/{id}/mom` | ✔ | Structured Minutes of Meeting (409 `minutes_not_ready` before processing) |
+| POST | `/api/v1/meetings/{id}/mom/pdf` | ✔ | Generate or reuse the MOM PDF; returns view and download links |
 
 Errors share one envelope:
 
@@ -385,6 +392,8 @@ minuteai/
 | Web app says "Cannot reach the MinuteAI server" | API not running on 8010 | Start uvicorn (step 5) |
 | Job retries with `embedding_unavailable` | The embedding model could not be downloaded (offline, proxy) | Restore network access once; afterwards the cached model works offline |
 | Search returns nothing for a meeting | The meeting has not been processed since M6, or its transcript changed | Process it again (no second LLM call if results are current) |
+| Job fails with `no_audio_track` | The uploaded video has no sound | Upload a recording with audio, or add notes / a transcript |
+| `/mom` returns 409 `minutes_not_ready` | The meeting has not been processed | Add content and process it |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
 
 ---
@@ -397,9 +406,9 @@ minuteai/
 - **M4** ✅ Recordings — direct S3 upload, signature validation, Gemini transcription
 - **M5** ✅ React UI — dashboard, meetings, live processing, action items, dark mode
 - **M6** ✅ Semantic search — local embeddings, pgvector HNSW, Search page
-- M7 Cross-meeting RAG
-- M8 Agent (tools, alerts, follow-up drafts)
-- M9 Agent UI + human approval
+- **M7** ✅ **Core workflow** — notes / transcript / audio / video → structured Minutes of Meeting → PDF
+- M8 Cross-meeting RAG
+- M9 Agent automation + agent UI + human approval
 - M10 AWS deployment
 - M11 Lambda + EventBridge scheduling
 - M12 Evaluation + writeup

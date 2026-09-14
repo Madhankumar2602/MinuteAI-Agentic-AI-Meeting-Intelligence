@@ -1,8 +1,8 @@
 # MinuteAI — Project Status
 
 **Last updated:** 2026-09-14
-**Current milestone:** M6 — Embeddings + pgvector ✅ **COMPLETE**
-**In progress:** M7 — **Core MOM workflow: structured Minutes of Meeting + PDF** (top priority)
+**Current milestone:** M7 — **Core MOM workflow: notes / transcript / audio / video → structured Minutes of Meeting → PDF** ✅ **COMPLETE**
+**In progress:** M8 — Cross-meeting RAG
 
 ---
 
@@ -68,12 +68,62 @@ they must not displace it.
 | **M4** | Recordings + S3 + transcription | ✅ `v0.4.0` (S3 local; real AWS S3 in M10) |
 | **M5** | React frontend | ✅ `v0.5.0` |
 | **M6** | Embeddings + pgvector + semantic search | ✅ `v0.6.0` |
-| **M7** | **Core MOM workflow — notes/transcript/audio/video → structured MOM → PDF** | 🔄 In progress (priority) |
-| M8 | Cross-meeting RAG | ⬜ Not started |
+| **M7** | **Core MOM workflow — notes/transcript/audio/video → structured MOM → PDF** | ✅ `v0.7.0` |
+| M8 | Cross-meeting RAG | 🔄 Next |
 | M9 | Agent automation + agent UI + human approval (merged) | ⬜ Not started |
 | M10 | AWS deployment | 🔴 Needs AWS account |
 | M11 | Lambda + EventBridge | 🔴 Needs AWS account |
 | M12 | Testing + evaluation + finalisation | ⬜ Not started |
+
+---
+
+## M7 — Core MOM workflow ✅ (ADR 0013)
+
+**The MVP success criterion is met and verified live:** a user provides meeting
+notes, a transcript, audio, or video → MinuteAI produces structured Minutes of
+Meeting → the user views them in the app and views/downloads the PDF.
+
+### Inputs
+- [x] **Meeting notes / description** as a distinct input kind (`kind: "notes"`); the model is told it is not verbatim speech; notes are never overwritten by a recording
+- [x] **Transcript** (M2), **audio** (M4)
+- [x] **Video**: audio track extracted locally with PyAV (16 kHz mono Opus) before transcription; video without sound fails at once with `no_audio_track`; exact duration for every format
+- [x] Meeting description sent to the model as a fenced **agenda**; delimiter markers inside untrusted text neutralised
+
+### Extraction (prompt `extract-v2`) + validation
+- [x] New MOM fields in the same single LLM call: **keywords**, **speaker contributions**, **pending/unresolved items** (evidence-verified), **next steps**
+- [x] Speaker **turns and word share counted from the transcript**, joined to the model's contribution summaries; everyone who spoke becomes a participant
+- [x] Deterministic **review flags**: open action item without owner / without deadline / unresolvable deadline wording, unverified evidence, unnamed speakers, stale transcript
+- [x] Migration `0006`: MOM JSONB columns on `summaries`; `notes` transcript source
+
+### Minutes of Meeting + PDF
+- [x] One `MinutesOfMeeting` model built from stored records, **including user corrections**: `GET /api/v1/meetings/{id}/mom`
+- [x] Professional A4 PDF (ReportLab): cover block, agenda, numbered sections (summary, discussion points, speakers, decisions, action items with owner/deadline/status, pending, next steps, items needing review, source & transcript reference + evidence appendix), "Page n of N" footer, embedded DejaVu fonts, all text escaped
+- [x] Stored in S3 under the meeting prefix by content fingerprint; reused when unchanged; old versions deleted; removed with the meeting
+- [x] Rendered as the job's final, non-fatal stage (`mom_pdf_generated`); `POST /api/v1/meetings/{id}/mom/pdf` renders or reuses on demand and returns presigned **inline view** and **attachment download** links (RFC 5987 filename)
+
+### Web app
+- [x] New meeting: **Meeting notes · Transcript · Audio · Video · Add later**, with agenda field; a video chosen under "Audio" (or vice versa) is caught before upload
+- [x] Meeting page opens on the **Minutes** tab: executive summary + keywords, discussion points, numbered decisions, action items (owner, deadline, one-click status), pending items, next steps, speakers with share bars, needs-review panel, source & evidence
+- [x] **View minutes PDF** (in-app preview dialog) and **Download**; PDF card shows file name, size, pages, and whether it was freshly generated
+- [x] Sidebar milestone labels follow the new roadmap (Ask → M8, Agent → M9)
+
+**Tests:** backend 278 passed, 3 skipped (live, opt-in); frontend 58 passed; typecheck, lint, build clean.
+11 mutations checked, all caught: removing PDF escaping, flagging closed items, counting speakers in notes, a constant fingerprint, keeping old PDFs, a fatal PDF stage, sending the whole video, notes not treated as human input, removing fence neutralisation, swapping inline/attachment, dropping the agenda.
+
+**Verified live** (real API, Gemini, PostgreSQL, DynamoDB Local, RustFS, browser):
+
+| Input | Result |
+|---|---|
+| **Video** (MP4, 1.9 MB, 154 s of speech) | Audio extracted to 457 KB Opus; `transcription → indexing → [Gemini llm_unavailable → retry, transcription and index reused] → mom_pdf_generated → completed` in 137 s; duration 154 s exact; 4 speakers with counts and contributions; 2 decisions, 3 action items with owners and dates, 2 pending items, 4 next steps; **7/7 evidence verified**; 3-page PDF, 72.6 KB; reused PDF returned in 40 ms |
+| **Meeting notes** (budget review) | 89 s (again one transient Gemini retry); input kind `notes`; participants from the notes, no bogus "Agenda" speaker; 1 decision, 2 action items ("by Friday" → 18 Sep, "before the next review" → 12 Oct), 2 pending items (GPU cap question, parked relocation), 4 next steps; **5/5 evidence verified** |
+| Browser | Minutes tab renders every section; "View minutes PDF" opens the in-app preview; the storage response is `application/pdf`, `inline`, no frame-blocking headers |
+
+**Found while building M7:**
+- **`window.open` after a request is blocked** in the in-app browser: "View" silently became a download. Replaced with an in-app preview dialog plus plain links
+- **Broken `Content-Disposition` in production code**: the `filename*` part contained the literal text `{quote(filename)}` (an f-string mangled while editing, and its now-unused import auto-removed by the linter). The test checked only the plain `filename`; it now asserts the RFC 5987 value
+- A migration naming bug (`op.f` missing → double-prefixed constraint name) made `alembic upgrade` fail; while retrying, a scripted `downgrade -1` rolled back migration 0005 in the **local dev database**, dropping its search chunks (test meetings only). Re-applied; those meetings are re-indexed when next processed
+- Transcription quality, not extraction, is the weakest link: "Meera" was transcribed as "Mira", and one diagnosis was attributed to the wrong speaker. The minutes faithfully reflect the transcript; review flags cannot detect this
+- Gemini returned transient `llm_unavailable` in both live runs; the M3 retry handled it without re-transcribing or re-indexing
 
 ---
 
@@ -300,6 +350,9 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | Free-tier Gemini content may be used by Google | Medium | Synthetic/consented transcripts only |
 | pgvector on RDS not yet verified (HNSW + `iterative_scan` needs pgvector ≥ 0.8) | Medium | Before M10 |
 | Embedding runs on the API process CPU when the worker is embedded | Low | Standalone worker (ADR 0008) |
+| PDF fonts do not cover CJK / Indic scripts | Low | Add Noto fonts per script if needed (ADR 0013) |
+| Transcription speaker attribution and name spelling errors flow into the minutes | Medium | Evaluate in M12; users can edit the transcript and re-run |
+| Job result `transcribed` describes the final attempt only (false after a retry that reused the transcription) | Low | Cosmetic; events show the full history |
 | No bulk re-index command after a model/chunker change (meetings re-index when re-processed) | Low | Add if the model changes |
 
 ---
@@ -320,6 +373,7 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | [0010](adr/0010-explicit-storage-backend.md) | `STORAGE_BACKEND`: local development cannot reach real AWS |
 | [0011](adr/0011-react-frontend.md) | React SPA, generated API types, sessionStorage token trade-off |
 | [0012](adr/0012-local-embeddings-and-semantic-search.md) | Local embeddings via ONNX Runtime, turn-based chunking, iterative HNSW scans |
+| [0013](adr/0013-minutes-of-meeting-and-pdf.md) | Minutes of Meeting model, deterministic review flags, ReportLab PDF in S3, audio extracted from video |
 
 ---
 
@@ -338,9 +392,12 @@ Local development only. No cloud resources provisioned.
 
 ## Next
 
-**M7 (cross-meeting RAG)**: `POST /api/v1/ask` retrieves the user's top chunks
-through the M6 search (same ownership join), asks Gemini to answer **only** from
-them with numbered citations, verifies every citation points at a retrieved chunk,
-and refuses when the context does not contain the answer. Web app: the "Ask your
-meetings" page with cited sources linking into transcripts. M8 and M9 (agent)
-follow. M10 and M11 need an AWS account (Terraform).
+**M8 (cross-meeting RAG)**: `POST /api/v1/ask` retrieves the user's top chunks
+through the M6 search (same ownership join), asks Gemini to answer only from them
+with numbered citations, verifies every citation points at a retrieved chunk, and
+refuses when the context does not contain the answer. The web app's "Ask your
+meetings" page links cited sources into transcripts and minutes.
+
+**M9 (controlled agent)** then works on top of the minutes: overdue tasks,
+unresolved decisions and pending items, follow-up drafts, with human approval.
+M10 and M11 need an AWS account (Terraform).
