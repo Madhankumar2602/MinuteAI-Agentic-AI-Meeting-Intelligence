@@ -1432,6 +1432,87 @@
      }
     ]
    }
+  },
+  "/api/v1/search": {
+   "get": {
+    "tags": [
+     "search"
+    ],
+    "summary": "Find transcript passages by meaning, not just matching words",
+    "description": "Results are ordered by cosine similarity (``score``, higher is closer).\n\nOnly meetings the user can access are searched, and only chunks built from\nthe meeting's current transcript. A meeting becomes searchable once it has\nbeen processed.",
+    "operationId": "search_api_v1_search_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "q",
+      "in": "query",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "minLength": 2,
+       "maxLength": 500,
+       "title": "Q"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 50,
+       "minimum": 1,
+       "default": 10,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "meeting_id",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "format": "uuid"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "Search one meeting only",
+       "title": "Meeting Id"
+      },
+      "description": "Search one meeting only"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SearchResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
   }
  },
  "components": {
@@ -1920,7 +2001,7 @@
      "type": {
       "type": "string",
       "title": "Type",
-      "description": "queued, started, transcription_started, transcription_completed, retry_scheduled, lease_expired_requeued, completed, failed"
+      "description": "queued, started, transcription_started, transcription_completed, indexing_completed, retry_scheduled, lease_expired_requeued, completed, failed"
      },
      "detail": {
       "additionalProperties": true,
@@ -2062,6 +2143,17 @@
       "type": "boolean",
       "title": "Transcribed",
       "default": false
+     },
+     "chunks": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Chunks"
      },
      "decisions": {
       "type": "integer",
@@ -2576,6 +2668,88 @@
     ],
     "title": "ProcessSubmissionResponse",
     "description": "Response to POST /meetings/{id}/process.\n\n* 202 with ``job`` set: work was queued (or an identical job was already\n  active and is returned instead of starting a duplicate).\n* 200 with ``job`` null and ``cached`` true: stored results are already\n  current for this transcript, prompt, and model. Nothing was queued."
+   },
+   "SearchResponse": {
+    "properties": {
+     "query": {
+      "type": "string",
+      "title": "Query"
+     },
+     "model": {
+      "type": "string",
+      "title": "Model"
+     },
+     "results": {
+      "items": {
+       "$ref": "#/components/schemas/SearchResult"
+      },
+      "type": "array",
+      "title": "Results"
+     }
+    },
+    "type": "object",
+    "required": [
+     "query",
+     "model",
+     "results"
+    ],
+    "title": "SearchResponse"
+   },
+   "SearchResult": {
+    "properties": {
+     "chunk_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Chunk Id"
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "meeting_title": {
+      "type": "string",
+      "title": "Meeting Title"
+     },
+     "meeting_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Meeting Date"
+     },
+     "chunk_index": {
+      "type": "integer",
+      "title": "Chunk Index"
+     },
+     "content": {
+      "type": "string",
+      "title": "Content"
+     },
+     "char_start": {
+      "type": "integer",
+      "title": "Char Start"
+     },
+     "char_end": {
+      "type": "integer",
+      "title": "Char End"
+     },
+     "score": {
+      "type": "number",
+      "title": "Score"
+     }
+    },
+    "type": "object",
+    "required": [
+     "chunk_id",
+     "meeting_id",
+     "meeting_title",
+     "meeting_date",
+     "chunk_index",
+     "content",
+     "char_start",
+     "char_end",
+     "score"
+    ],
+    "title": "SearchResult"
    },
    "SummaryResponse": {
     "properties": {

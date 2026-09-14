@@ -15,6 +15,7 @@ import type {
   MeetingPage,
   MeetingStatus,
   ProcessSubmission,
+  SearchResponse,
   Token,
   Transcript,
   UploadComplete,
@@ -66,6 +67,10 @@ export const api = {
       method: "POST",
       json: { upload_token: uploadToken, replace_manual_transcript: replaceManualTranscript },
     }),
+
+  // ---- semantic search (M6) ------------------------------------------------
+  search: (params: { q: string; limit?: number; meeting_id?: string }) =>
+    apiRequest<SearchResponse>(`/search${qs(params)}`),
 
   // ---- action items & decisions -------------------------------------------
   listActionItems: (params: { status?: ActionItemStatus; overdue?: boolean; page?: number; size?: number } = {}) =>

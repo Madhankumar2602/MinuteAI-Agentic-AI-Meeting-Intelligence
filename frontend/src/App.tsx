@@ -11,6 +11,7 @@ import { MeetingDetailPage } from "./pages/MeetingDetailPage";
 import { MeetingsPage } from "./pages/MeetingsPage";
 import { NewMeetingPage } from "./pages/NewMeetingPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { SearchPage } from "./pages/SearchPage";
 
 export function AppRoutes() {
   return (
@@ -23,6 +24,7 @@ export function AppRoutes() {
         <Route path="meetings/new" element={<NewMeetingPage />} />
         <Route path="meetings/:meetingId" element={<MeetingDetailPage />} />
         <Route path="action-items" element={<ActionItemsPage />} />
+        <Route path="search" element={<SearchPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

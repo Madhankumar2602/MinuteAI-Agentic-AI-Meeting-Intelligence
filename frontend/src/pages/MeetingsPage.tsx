@@ -1,12 +1,13 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CalendarDays, ChevronLeft, ChevronRight, Plus, Search, SearchX } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
 
 import { api } from "../api/endpoints";
 import type { MeetingStatus } from "../api/types";
 import { MeetingRow } from "../components/MeetingRow";
 import { EmptyState, ErrorBanner, PageHeader, Skeleton } from "../components/ui";
+import { useDebounced } from "../lib/useDebounced";
 
 const PAGE_SIZE = 20;
 
@@ -18,16 +19,6 @@ const FILTERS: { key: MeetingStatus | ""; label: string }[] = [
   { key: "failed", label: "Failed" },
   { key: "created", label: "Draft" },
 ];
-
-/** Wait until typing pauses before searching, so each keystroke isn't a request. */
-function useDebounced<T>(value: T, ms = 300): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(value), ms);
-    return () => window.clearTimeout(timer);
-  }, [value, ms]);
-  return debounced;
-}
 
 export function MeetingsPage() {
   const [status, setStatus] = useState<MeetingStatus | "">("");

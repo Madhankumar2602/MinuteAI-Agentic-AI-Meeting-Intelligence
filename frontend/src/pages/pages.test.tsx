@@ -419,3 +419,69 @@ describe("theme and resilience", () => {
     expect(await screen.findByText("archived")).toBeInTheDocument();
   });
 });
+
+describe("semantic search", () => {
+  const PASSAGE = "Priya: Users are still getting logged out after about ten minutes.\nMeera: The clock on one API server has drifted.";
+  const hit = (overrides: Record<string, unknown> = {}) => ({
+    chunk_id: "c1", meeting_id: MEETING.id, meeting_title: "Platform sync", meeting_date: MEETING.meeting_date,
+    chunk_index: 1, content: PASSAGE, char_start: 120, char_end: 240, score: 0.56, ...overrides,
+  });
+
+  it("searches by meaning after typing pauses and links each passage to its place in the transcript", async () => {
+    const { requests } = mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "GET /api/v1/search": ({ url }) => ({
+        body: { query: url.searchParams.get("q"), model: "minilm", results: [hit(), hit({ chunk_id: "c2", score: 0.12, content: "Arjun: Morning." })] },
+      }),
+    });
+    renderApp("/search");
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole("heading", { name: "Search across every processed meeting" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Search meeting transcripts"), "why are people signed out");
+
+    const results = await screen.findByRole("list", { name: "Search results" });
+    const [first, second] = within(results).getAllByRole("listitem");
+    expect(within(first!).getByText("Strong match")).toBeInTheDocument();
+    expect(within(first!).getByText("Users are still getting logged out after about ten minutes.", { exact: false })).toBeInTheDocument();
+    expect(within(first!).getByRole("link", { name: /Open in transcript/ })).toHaveAttribute(
+      "href", `/meetings/${MEETING.id}?tab=transcript&from=120&to=240`,
+    );
+    expect(within(second!).getByText("Weak match")).toBeInTheDocument();
+    // Debounced: a single request for the finished question.
+    expect(requests.filter((r) => r.path === "/api/v1/search").map((r) => new URLSearchParams(r.search).get("q"))).toEqual(["why are people signed out"]);
+  });
+
+  it("explains when nothing matches", async () => {
+    mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "GET /api/v1/search": { query: "picnic", model: "minilm", results: [] },
+    });
+    renderApp("/search?q=picnic");
+    expect(await screen.findByRole("heading", { name: "No matching passages" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Search meeting transcripts")).toHaveValue("picnic");
+  });
+
+  it("opens search with Ctrl+K from any page", async () => {
+    mockApi({ "GET /api/v1/auth/me": USER, "GET /api/v1/dashboard": DASHBOARD });
+    renderApp("/");
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { name: /, Priya$/ });
+    await user.keyboard("{Control>}k{/Control}");
+    expect(await screen.findByRole("heading", { name: "Search your meetings" })).toBeInTheDocument();
+  });
+
+  it("highlights the passage a search result points to", async () => {
+    const content = "Priya: First line.\nKarthik: I'll have the runbook ready by next Wednesday.\nArjun: Last line.";
+    mockApi(detailRoutes({ [`GET /api/v1/meetings/${MEETING.id}/transcript`]: { ...TRANSCRIPT, content } }));
+    const start = content.indexOf("Karthik");
+    renderApp(`/meetings/${MEETING.id}?tab=transcript&from=${start}&to=${start + 20}`);
+
+    const transcript = await screen.findByLabelText("Transcript text");
+    const marked = transcript.querySelectorAll("[data-highlighted]");
+    expect(marked).toHaveLength(1);
+    expect(marked[0]).toHaveTextContent("Karthik: I'll have the runbook ready");
+  });
+});

@@ -72,3 +72,15 @@ describe("groupByUrgency", () => {
     ]);
   });
 });
+
+describe("matchStrength", () => {
+  it("labels similarity in plain language without treating it as a percentage", async () => {
+    const { matchStrength } = await import("./search");
+    expect(matchStrength(0.62).label).toBe("Strong match");
+    expect(matchStrength(0.45).label).toBe("Strong match");
+    expect(matchStrength(0.28).label).toBe("Good match");
+    expect(matchStrength(0.25).label).toBe("Good match");
+    expect(matchStrength(0.05).label).toBe("Weak match");
+    expect(matchStrength(-0.2).label).toBe("Weak match");
+  });
+});

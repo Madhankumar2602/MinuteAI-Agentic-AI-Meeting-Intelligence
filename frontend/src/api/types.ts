@@ -39,3 +39,6 @@ export type UploadUrl = Schemas["UploadUrlResponse"];
 export type UploadComplete = Schemas["UploadCompleteResponse"];
 
 export type Dashboard = Schemas["DashboardResponse"];
+
+export type SearchResponse = Schemas["SearchResponse"];
+export type SearchResult = Schemas["SearchResult"];

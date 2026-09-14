@@ -25,6 +25,7 @@ import { ActionItemRow } from "../components/ActionItemRow";
 import { useFeedback } from "../components/feedback-context";
 import { MeetingInput } from "../components/MeetingInput";
 import { SourceIcon } from "../components/MeetingRow";
+import { FormattedTranscript, type CharRange } from "../components/TranscriptText";
 import { ProcessingStatus } from "../components/ProcessingStatus";
 import { Avatar, Badge, EmptyState, ErrorBanner, MeetingStatusBadge, PageLoading, Spinner } from "../components/ui";
 import { formatBytes, formatDate, formatDateTime, formatDuration } from "../lib/format";
@@ -55,6 +56,11 @@ export function MeetingDetailPage() {
   const { toast, confirm } = useFeedback();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") as TabKey | null) ?? "overview";
+  // Set by a search result: the passage to highlight in the transcript.
+  const from = Number(searchParams.get("from"));
+  const to = Number(searchParams.get("to"));
+  const highlight: CharRange | null =
+    searchParams.has("from") && Number.isInteger(from) && Number.isInteger(to) && to > from ? { start: from, end: to } : null;
   const setTab = (next: TabKey) => setSearchParams(next === "overview" ? {} : { tab: next }, { replace: true });
 
   const meeting = useQuery({
@@ -249,7 +255,7 @@ export function MeetingDetailPage() {
               {tab === "transcript" && transcript.data && (
                 <div className="stack">
                   {media.data && <RecordingCard media={media.data} transcript={transcript.data} />}
-                  <TranscriptCard meetingId={meetingId} busy={busy} transcript={transcript.data} />
+                  <TranscriptCard meetingId={meetingId} busy={busy} transcript={transcript.data} highlight={highlight} />
                 </div>
               )}
             </div>
@@ -513,22 +519,12 @@ function DecisionsCard({ meetingId, decisions }: { meetingId: string; decisions:
 }
 
 /** Speaker names are highlighted; everything else is rendered as plain text. */
-function FormattedTranscript({ content }: { content: string }) {
-  return (
-    <div className="transcript" tabIndex={0} aria-label="Transcript text">
-      {content.split("\n").map((line, i) => {
-        const match = /^([^:\n]{1,40}):(.*)$/.exec(line);
-        return (
-          <div key={i}>
-            {match ? (<><span className="speaker">{match[1]}:</span>{match[2]}</>) : line || " "}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function TranscriptCard({ meetingId, busy, transcript }: { meetingId: string; busy: boolean; transcript: Transcript }) {
+function TranscriptCard({ meetingId, busy, transcript, highlight = null }: {
+  meetingId: string;
+  busy: boolean;
+  transcript: Transcript;
+  highlight?: CharRange | null;
+}) {
   const queryClient = useQueryClient();
   const { toast } = useFeedback();
   const [editing, setEditing] = useState(false);
@@ -574,7 +570,7 @@ function TranscriptCard({ meetingId, busy, transcript }: { meetingId: string; bu
             </div>
           </>
         ) : (
-          <FormattedTranscript content={transcript.content} />
+          <FormattedTranscript content={transcript.content} highlight={highlight} />
         )}
       </div>
     </section>

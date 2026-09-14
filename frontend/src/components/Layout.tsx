@@ -7,11 +7,12 @@ import {
   Menu,
   MessageSquareText,
   Plus,
+  Search,
   Sparkles,
   Workflow,
 } from "lucide-react";
-import { useState } from "react";
-import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router";
+import { useEffect, useState } from "react";
+import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router";
 
 import { api } from "../api/endpoints";
 import { useAuth } from "../auth/useAuth";
@@ -35,6 +36,19 @@ function BrandMark() {
 export function Layout() {
   const { user, loading, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+
+  // Ctrl+K / Cmd+K opens search from anywhere, as in most modern apps.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        navigate("/search");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate]);
   // The mobile menu is open for the page it was opened on; navigating closes
   // it, derived from the path rather than reset in an effect.
   const [menuOpenOn, setMenuOpenOn] = useState<string | null>(null);
@@ -72,6 +86,10 @@ export function Layout() {
           <NavLink to="/action-items" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             <CheckSquare size={18} /> Action items
             {overdue > 0 && <span className="nav-count" aria-label={`${overdue} overdue`}>{overdue}</span>}
+          </NavLink>
+          <NavLink to="/search" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+            <Search size={18} /> Search
+            <kbd className="nav-kbd" aria-hidden>Ctrl K</kbd>
           </NavLink>
 
           <div className="nav-section-label">Coming next</div>

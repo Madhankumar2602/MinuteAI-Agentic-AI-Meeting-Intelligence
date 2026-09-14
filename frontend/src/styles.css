@@ -388,6 +388,23 @@ code, .kbd { font-family: var(--mono); font-size: 0.9em; background: var(--bg-su
 .quote { margin-top: 8px; padding: 8px 12px; border-left: 3px solid var(--border-strong); background: var(--surface-2); border-radius: 0 var(--radius-xs) var(--radius-xs) 0; color: var(--text-2); font-size: 13px; font-style: italic; }
 .transcript { font-family: var(--mono); font-size: 13px; line-height: 1.75; white-space: pre-wrap; max-height: 560px; overflow: auto; padding: 18px 20px; background: var(--surface-2); border-radius: var(--radius-sm); border: 1px solid var(--border); }
 .transcript .speaker { color: var(--primary-text); font-weight: 700; }
+.transcript .hl { background: var(--warning-soft); border-radius: 3px; box-shadow: 0 0 0 3px var(--warning-soft); }
+
+/* ---- Semantic search (M6) ------------------------------------------------ */
+.nav-kbd { margin-left: auto; font: 600 10.5px/1 var(--mono); color: var(--text-3); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 3px 5px; }
+.search-hero { margin-bottom: 20px; }
+.search-hero svg { left: 16px; color: var(--primary); }
+.search-hero .input { width: 100%; min-width: 0; height: 52px; padding-left: 48px; font-size: 16px; border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.results { list-style: none; margin: 0; padding: 0; transition: opacity 0.15s; }
+.result .card-head { gap: 12px; flex-wrap: wrap; }
+.result-meta { display: grid; gap: 2px; min-width: 0; }
+.result-title { font-weight: 650; color: var(--text); text-decoration: none; }
+.result-title:hover { color: var(--primary-text); text-decoration: underline; }
+.result-open { margin-top: 10px; }
+.passage { font-size: 14px; line-height: 1.65; color: var(--text-2); white-space: pre-wrap; }
+.passage .speaker { color: var(--text); font-weight: 650; }
+.match-meter { display: inline-block; width: 56px; height: 6px; border-radius: 999px; background: var(--bg-subtle); overflow: hidden; }
+.match-meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary), var(--violet-text)); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 13px; }
 .kv dt { color: var(--text-3); }
 .kv dd { margin: 0; color: var(--text); font-weight: 500; text-align: right; }
