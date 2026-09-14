@@ -13,7 +13,7 @@ from typing import Annotated
 from typing import Annotated as _Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.core.deps import CurrentUser, DbSession
 from app.core.logging import get_logger
@@ -69,11 +69,25 @@ async def list_meetings(
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
     status_filter: Annotated[MeetingStatus | None, Query(alias="status")] = None,
+    q: Annotated[
+        str | None,
+        Query(max_length=100, description="Case-insensitive search in title and description."),
+    ] = None,
 ) -> Page[MeetingResponse]:
     """Only the caller's own meetings. The owner filter is not optional."""
     conditions = [Meeting.owner_id == current_user.id]
     if status_filter is not None:
         conditions.append(Meeting.status == status_filter)
+    if q and q.strip():
+        # LIKE wildcards in user input are escaped so "100%" matches literally.
+        term = q.strip().replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        pattern = f"%{term}%"
+        conditions.append(
+            or_(
+                Meeting.title.ilike(pattern, escape="\\"),
+                Meeting.description.ilike(pattern, escape="\\"),
+            )
+        )
 
     total = await db.scalar(select(func.count()).select_from(Meeting).where(*conditions)) or 0
 

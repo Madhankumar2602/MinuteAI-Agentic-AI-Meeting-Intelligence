@@ -260,3 +260,46 @@ async def test_patch_rejects_explicit_null_for_required_fields(
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+async def test_search_matches_title_and_description_case_insensitively(
+    client: AsyncClient, make_user, auth_headers, meeting_payload
+) -> None:
+    user = await make_user()
+    headers = await auth_headers(user)
+    for title, description in [
+        ("Platform sync", "PostgreSQL migration"),
+        ("Design review", "New onboarding flow"),
+        ("Budget 100% review", None),
+    ]:
+        await client.post(
+            "/api/v1/meetings",
+            json=meeting_payload(title=title, description=description),
+            headers=headers,
+        )
+
+    by_title = (await client.get("/api/v1/meetings?q=PLATFORM", headers=headers)).json()
+    by_description = (await client.get("/api/v1/meetings?q=onboarding", headers=headers)).json()
+    literal_percent = (await client.get("/api/v1/meetings?q=100%25", headers=headers)).json()
+    wildcard_only = (await client.get("/api/v1/meetings?q=%25", headers=headers)).json()
+
+    assert [m["title"] for m in by_title["items"]] == ["Platform sync"]
+    assert [m["title"] for m in by_description["items"]] == ["Design review"]
+    assert [m["title"] for m in literal_percent["items"]] == ["Budget 100% review"]
+    # "%" is matched literally, not as "everything".
+    assert [m["title"] for m in wildcard_only["items"]] == ["Budget 100% review"]
+
+
+async def test_search_never_returns_other_users_meetings(
+    client: AsyncClient, make_user, auth_headers, meeting_payload
+) -> None:
+    alice, bob = await make_user(), await make_user()
+    await client.post(
+        "/api/v1/meetings",
+        json=meeting_payload(title="Secret roadmap"),
+        headers=await auth_headers(alice),
+    )
+    result = (
+        await client.get("/api/v1/meetings?q=roadmap", headers=await auth_headers(bob))
+    ).json()
+    assert result["total"] == 0

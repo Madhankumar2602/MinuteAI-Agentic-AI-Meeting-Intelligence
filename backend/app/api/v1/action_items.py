@@ -65,8 +65,8 @@ async def list_action_items(
 
     base = select(ActionItem).join(Meeting, Meeting.id == ActionItem.meeting_id).where(*conditions)
     total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    rows = await db.scalars(
-        base
+    rows = await db.execute(
+        base.add_columns(Meeting.title)
         # Soonest deadline first, undated items last, then meeting order.
         .order_by(
             ActionItem.deadline.asc().nulls_last(), Meeting.meeting_date.desc(), ActionItem.position
@@ -75,7 +75,10 @@ async def list_action_items(
         .limit(size)
     )
     return Page[ActionItemResponse](
-        items=[ActionItemResponse.model_validate(r) for r in rows.all()],
+        items=[
+            ActionItemResponse.model_validate(item).model_copy(update={"meeting_title": title})
+            for item, title in rows.all()
+        ],
         total=total,
         page=page,
         size=size,

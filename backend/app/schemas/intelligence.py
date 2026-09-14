@@ -76,6 +76,9 @@ class ActionItemResponse(BaseModel):
     evidence_verified: bool
     created_at: datetime
     updated_at: datetime
+    # Filled in by cross-meeting endpoints, where an item needs its meeting for
+    # context. Null in per-meeting lists, where the meeting is already known.
+    meeting_title: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
