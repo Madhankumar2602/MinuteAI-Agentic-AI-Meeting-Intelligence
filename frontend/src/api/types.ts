@@ -44,4 +44,7 @@ export type SearchResponse = Schemas["SearchResponse"];
 
 export type Minutes = Schemas["MinutesOfMeeting"];
 export type MinutesPdf = Schemas["MomPdfResponse"];
+
+export type AskResponse = Schemas["AskResponse"];
+export type AskSource = Schemas["AskSource"];
 export type SearchResult = Schemas["SearchResult"];

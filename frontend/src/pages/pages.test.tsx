@@ -126,9 +126,10 @@ describe("dashboard", () => {
   it("does not offer unbuilt features as working pages", async () => {
     mockApi({ "GET /api/v1/auth/me": USER, "GET /api/v1/dashboard": DASHBOARD });
     renderApp("/");
-    const upcoming = await screen.findByText("Ask your meetings");
+    const upcoming = await screen.findByText("Agent follow-ups");
     expect(upcoming.closest("[aria-disabled]")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByRole("link", { name: /Ask your meetings/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Agent follow-ups/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Ask your meetings/ })).toHaveAttribute("href", "/ask");
   });
 
   it("marks an action item done with one click and confirms with a toast", async () => {
@@ -584,5 +585,88 @@ describe("minutes PDF", () => {
 
     expect(await within(card).findByRole("alert")).toHaveTextContent("Minutes are available once the meeting has been processed.");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("ask your meetings", () => {
+  const SOURCE = {
+    number: 2, meeting_id: MEETING.id, meeting_title: "Platform sync", meeting_date: MEETING.meeting_date, kind: "action_item",
+    text: "Action item: Prepare the production migration runbook\nOwner: Karthik\nDeadline: 2026-09-16\nStatus: pending",
+    char_start: null, char_end: null, score: 0.61,
+  };
+  const TRANSCRIPT_SOURCE = {
+    ...SOURCE, number: 5, kind: "transcript", text: "Karthik: Yes, I will have the runbook ready by next Wednesday.", char_start: 800, char_end: 861,
+  };
+
+  it("sends the question and shows a cited answer linked to its meetings", async () => {
+    const { requests } = mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "POST /api/v1/ask": {
+        question: "Who owns the runbook?", status: "answered",
+        answer: "Karthik owns the runbook, due 16 September [2][5].",
+        sources: [SOURCE, TRANSCRIPT_SOURCE], retrieved: 8, model: "gemini-3.6-flash", prompt_version: "ask-v1", latency_ms: 3200,
+      },
+    });
+    renderApp("/ask");
+    const user = userEvent.setup();
+
+    await user.type(await screen.findByLabelText("Your question"), "Who owns the runbook?");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+
+    const entry = await screen.findByRole("article", { name: "Question: Who owns the runbook?" });
+    expect(await within(entry).findByText(/Karthik owns the runbook, due 16 September/)).toBeInTheDocument();
+    expect(within(entry).getByRole("link", { name: "Source 2" })).toHaveAttribute("href", expect.stringMatching(/#src-1-2$/));
+    const sources = within(entry).getByRole("list", { name: "Sources" });
+    const [minutesSource, transcriptSource] = within(sources).getAllByRole("listitem");
+    expect(within(minutesSource!).getByText("Minutes · action item")).toBeInTheDocument();
+    expect(within(minutesSource!).getByRole("link", { name: /Open minutes/ })).toHaveAttribute("href", `/meetings/${MEETING.id}`);
+    expect(within(transcriptSource!).getByRole("link", { name: /Open in transcript/ })).toHaveAttribute(
+      "href", `/meetings/${MEETING.id}?tab=transcript&from=800&to=861`,
+    );
+    expect(within(entry).getByText(/Based on 2 cited of 8 retrieved passages/)).toBeInTheDocument();
+    expect(requests.find((r) => r.path === "/api/v1/ask")!.body).toEqual({ question: "Who owns the runbook?" });
+    expect(screen.getByLabelText("Your question")).toHaveValue("");
+  });
+
+  it("says plainly when the answer is not in the meetings, without inventing one", async () => {
+    mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "POST /api/v1/ask": {
+        question: "What is the design budget?", status: "insufficient_context", answer: "Not found: the meetings do not mention a design budget.",
+        sources: [], retrieved: 0, model: null, prompt_version: "ask-v1", latency_ms: 40,
+      },
+    });
+    renderApp("/ask");
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Which action items are still open, and who owns them?" }));
+    await user.clear(screen.getByLabelText("Your question"));
+    await user.type(screen.getByLabelText("Your question"), "What is the design budget?");
+    await user.click(screen.getByRole("button", { name: /Ask$/ }));
+
+    expect(await screen.findByText("Not found in your meetings")).toBeInTheDocument();
+    expect(screen.getByText("Not found: the meetings do not mention a design budget.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Sources" })).not.toBeInTheDocument();
+  });
+
+  it("guides a user with no processed meetings", async () => {
+    mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "POST /api/v1/ask": {
+        question: "What did we decide?", status: "no_indexed_meetings", answer: "None of your meetings are ready to search yet.",
+        sources: [], retrieved: 0, model: null, prompt_version: "ask-v1", latency_ms: 20,
+      },
+    });
+    renderApp("/ask");
+    const user = userEvent.setup();
+
+    await user.type(await screen.findByLabelText("Your question"), "What did we decide?");
+    await user.click(screen.getByRole("button", { name: /Ask$/ }));
+
+    expect(await screen.findByText("No meetings to search yet")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add a meeting" })).toHaveAttribute("href", "/meetings/new");
   });
 });

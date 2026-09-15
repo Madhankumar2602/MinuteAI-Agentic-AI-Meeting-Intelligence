@@ -584,3 +584,28 @@ code, .kbd { font-family: var(--mono); font-size: 0.9em; background: var(--bg-su
 .pdf-modal-head h2 { font-size: 14.5px; }
 .pdf-frame { flex: 1; width: 100%; border: 0; background: #525659; }
 .page-subtitle { white-space: pre-line; }
+
+/* ---- Ask your meetings (M8) ---------------------------------------------- */
+.ask-thread { display: grid; gap: 22px; margin-bottom: 18px; }
+.ask-entry { display: grid; gap: 10px; }
+.ask-question { display: flex; gap: 10px; align-items: flex-start; }
+.ask-question p { margin: 0; padding: 10px 14px; border-radius: 14px 14px 14px 4px; background: var(--primary-soft); color: var(--text); font-weight: 550; max-width: 760px; }
+.ask-answer { margin-left: 42px; }
+.ask-answer.pending { display: flex; align-items: center; gap: 10px; padding: 16px 20px; }
+.ask-answer.not-found { padding: 16px 20px; border-style: dashed; }
+.ask-text { margin: 0; font-size: 15px; line-height: 1.7; color: var(--text); white-space: pre-line; }
+.cite { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin: 0 2px; border-radius: 6px; font-size: 11px; font-weight: 700; line-height: 1; vertical-align: 2px; text-decoration: none; background: var(--primary-soft); color: var(--primary-text); border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent); }
+a.cite:hover { background: var(--primary); color: #fff; }
+.cite.static { width: 24px; height: 24px; font-size: 12px; flex: none; }
+.ask-sources { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.ask-source { padding: 14px 20px; display: grid; gap: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 90px; }
+.ask-source:last-child { border-bottom: 0; }
+.ask-source:target { background: color-mix(in srgb, var(--primary-soft) 60%, transparent); }
+.ask-source-text { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); max-height: 180px; overflow: auto; }
+.ask-source-text .passage { margin: 0; }
+.ask-source .btn { justify-self: start; }
+.ask-composer { position: sticky; bottom: 16px; padding: 12px 14px; display: grid; gap: 8px; box-shadow: var(--shadow-lg); }
+.ask-composer .textarea { min-height: 56px; resize: vertical; border: 0; box-shadow: none; padding: 6px 4px; }
+.ask-composer .textarea:focus { outline: none; box-shadow: none; }
+.ask-composer:focus-within { border-color: var(--primary); }
+@media (max-width: 860px) { .ask-answer { margin-left: 0; } }

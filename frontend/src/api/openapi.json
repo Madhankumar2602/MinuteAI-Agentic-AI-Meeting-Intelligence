@@ -1617,6 +1617,53 @@
      }
     }
    }
+  },
+  "/api/v1/ask": {
+   "post": {
+    "tags": [
+     "ask your meetings"
+    ],
+    "summary": "Answer a question from your meetings, with cited sources",
+    "description": "Searches the transcripts and Minutes of Meeting of the meetings you can\naccess, and answers **only** from what it finds.\n\n* ``answered``: every statement cites a numbered source, and ``sources``\n  lists exactly the cited passages with their meeting.\n* ``insufficient_context``: nothing relevant was found, or the model could\n  not support an answer from what was found. Nothing is invented.\n* ``no_indexed_meetings``: no processed meetings to search yet.",
+    "operationId": "ask_meetings_api_v1_ask_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AskRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AskResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ]
+   }
   }
  },
  "components": {
@@ -1861,6 +1908,175 @@
     "title": "ActionItemUpdateRequest",
     "description": "Human corrections to an extracted action item. Every field optional.\n\n``deadline`` and ``priority`` may be set to null deliberately (to clear\nthem); ``task`` and ``status`` may not."
    },
+   "AskRequest": {
+    "properties": {
+     "question": {
+      "type": "string",
+      "maxLength": 1000,
+      "minLength": 3,
+      "title": "Question"
+     },
+     "meeting_ids": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string",
+         "format": "uuid"
+        },
+        "type": "array",
+        "maxItems": 50
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Meeting Ids",
+      "description": "Only search these meetings (each must be accessible). Default: all."
+     }
+    },
+    "type": "object",
+    "required": [
+     "question"
+    ],
+    "title": "AskRequest"
+   },
+   "AskResponse": {
+    "properties": {
+     "question": {
+      "type": "string",
+      "title": "Question"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "answered",
+       "insufficient_context",
+       "no_indexed_meetings"
+      ],
+      "title": "Status"
+     },
+     "answer": {
+      "type": "string",
+      "title": "Answer"
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/AskSource"
+      },
+      "type": "array",
+      "title": "Sources",
+      "description": "Only the sources the answer cites."
+     },
+     "retrieved": {
+      "type": "integer",
+      "title": "Retrieved",
+      "description": "Passages retrieved and shown to the model."
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model",
+      "description": "The answering model; null if it was not called."
+     },
+     "prompt_version": {
+      "type": "string",
+      "title": "Prompt Version"
+     },
+     "latency_ms": {
+      "type": "integer",
+      "title": "Latency Ms"
+     }
+    },
+    "type": "object",
+    "required": [
+     "question",
+     "status",
+     "answer",
+     "sources",
+     "retrieved",
+     "model",
+     "prompt_version",
+     "latency_ms"
+    ],
+    "title": "AskResponse"
+   },
+   "AskSource": {
+    "properties": {
+     "number": {
+      "type": "integer",
+      "title": "Number",
+      "description": "The [n] used in the answer."
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "meeting_title": {
+      "type": "string",
+      "title": "Meeting Title"
+     },
+     "meeting_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Meeting Date"
+     },
+     "kind": {
+      "$ref": "#/components/schemas/ChunkSource"
+     },
+     "text": {
+      "type": "string",
+      "title": "Text",
+      "description": "What the model was shown for this source."
+     },
+     "char_start": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Char Start",
+      "description": "Transcript offsets, for transcript sources."
+     },
+     "char_end": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Char End"
+     },
+     "score": {
+      "type": "number",
+      "title": "Score"
+     }
+    },
+    "type": "object",
+    "required": [
+     "number",
+     "meeting_id",
+     "meeting_title",
+     "meeting_date",
+     "kind",
+     "text",
+     "char_start",
+     "char_end",
+     "score"
+    ],
+    "title": "AskSource"
+   },
    "Body_login_api_v1_auth_login_post": {
     "properties": {
      "grant_type": {
@@ -1919,6 +2135,19 @@
      "password"
     ],
     "title": "Body_login_api_v1_auth_login_post"
+   },
+   "ChunkSource": {
+    "type": "string",
+    "enum": [
+     "transcript",
+     "summary",
+     "decision",
+     "action_item",
+     "pending",
+     "next_steps"
+    ],
+    "title": "ChunkSource",
+    "description": "What a chunk was built from (M8).\n\n``transcript`` passages are exact slices of the transcript (M6). The others\nare embedded from the meeting's Minutes of Meeting so questions about\ndecisions, owners, and open items retrieve the structured answer, not only\nthe conversation around it."
    },
    "DashboardResponse": {
     "properties": {
@@ -2258,6 +2487,17 @@
        }
       ],
       "title": "Chunks"
+     },
+     "minutes_chunks": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Minutes Chunks"
      },
      "mom_pdf": {
       "anyOf": [

@@ -4,6 +4,7 @@ import type {
   ActionItemPage,
   ActionItemStatus,
   ActionItemUpdate,
+  AskResponse,
   Dashboard,
   Decision,
   DecisionStatus,
@@ -73,6 +74,10 @@ export const api = {
       method: "POST",
       json: { upload_token: uploadToken, replace_manual_transcript: replaceManualTranscript },
     }),
+
+  // ---- ask your meetings (M8) -----------------------------------------------
+  ask: (body: { question: string; meeting_ids?: string[] }) =>
+    apiRequest<AskResponse>("/ask", { method: "POST", json: body }),
 
   // ---- semantic search (M6) ------------------------------------------------
   search: (params: { q: string; limit?: number; meeting_id?: string }) =>

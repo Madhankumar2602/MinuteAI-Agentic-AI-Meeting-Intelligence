@@ -495,6 +495,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer a question from your meetings, with cited sources
+         * @description Searches the transcripts and Minutes of Meeting of the meetings you can
+         *     access, and answers **only** from what it finds.
+         *
+         *     * ``answered``: every statement cites a numbered source, and ``sources``
+         *       lists exactly the cited passages with their meeting.
+         *     * ``insufficient_context``: nothing relevant was found, or the model could
+         *       not support an answer from what was found. Nothing is invented.
+         *     * ``no_indexed_meetings``: no processed meetings to search yet.
+         */
+        post: operations["ask_meetings_api_v1_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -580,6 +607,82 @@ export interface components {
             deadline?: string | null;
             priority?: components["schemas"]["ActionItemPriority"] | null;
         };
+        /** AskRequest */
+        AskRequest: {
+            /** Question */
+            question: string;
+            /**
+             * Meeting Ids
+             * @description Only search these meetings (each must be accessible). Default: all.
+             */
+            meeting_ids?: string[] | null;
+        };
+        /** AskResponse */
+        AskResponse: {
+            /** Question */
+            question: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "answered" | "insufficient_context" | "no_indexed_meetings";
+            /** Answer */
+            answer: string;
+            /**
+             * Sources
+             * @description Only the sources the answer cites.
+             */
+            sources: components["schemas"]["AskSource"][];
+            /**
+             * Retrieved
+             * @description Passages retrieved and shown to the model.
+             */
+            retrieved: number;
+            /**
+             * Model
+             * @description The answering model; null if it was not called.
+             */
+            model: string | null;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Latency Ms */
+            latency_ms: number;
+        };
+        /** AskSource */
+        AskSource: {
+            /**
+             * Number
+             * @description The [n] used in the answer.
+             */
+            number: number;
+            /**
+             * Meeting Id
+             * Format: uuid
+             */
+            meeting_id: string;
+            /** Meeting Title */
+            meeting_title: string;
+            /**
+             * Meeting Date
+             * Format: date-time
+             */
+            meeting_date: string;
+            kind: components["schemas"]["ChunkSource"];
+            /**
+             * Text
+             * @description What the model was shown for this source.
+             */
+            text: string;
+            /**
+             * Char Start
+             * @description Transcript offsets, for transcript sources.
+             */
+            char_start: number | null;
+            /** Char End */
+            char_end: number | null;
+            /** Score */
+            score: number;
+        };
         /** Body_login_api_v1_auth_login_post */
         Body_login_api_v1_auth_login_post: {
             /** Grant Type */
@@ -604,6 +707,17 @@ export interface components {
              */
             client_secret?: string | null;
         };
+        /**
+         * ChunkSource
+         * @description What a chunk was built from (M8).
+         *
+         *     ``transcript`` passages are exact slices of the transcript (M6). The others
+         *     are embedded from the meeting's Minutes of Meeting so questions about
+         *     decisions, owners, and open items retrieve the structured answer, not only
+         *     the conversation around it.
+         * @enum {string}
+         */
+        ChunkSource: "transcript" | "summary" | "decision" | "action_item" | "pending" | "next_steps";
         /** DashboardResponse */
         DashboardResponse: {
             meetings: components["schemas"]["MeetingCounts"];
@@ -733,6 +847,8 @@ export interface components {
             transcribed: boolean;
             /** Chunks */
             chunks?: number | null;
+            /** Minutes Chunks */
+            minutes_chunks?: number | null;
             /** Mom Pdf */
             mom_pdf?: boolean | null;
             /** Decisions */
@@ -2390,6 +2506,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_meetings_api_v1_ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

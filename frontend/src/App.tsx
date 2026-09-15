@@ -5,6 +5,7 @@ import { AppProviders } from "./AppProviders";
 import { Layout } from "./components/Layout";
 import { makeQueryClient } from "./lib/queryClient";
 import { ActionItemsPage } from "./pages/ActionItemsPage";
+import { AskPage } from "./pages/AskPage";
 import { LoginPage, RegisterPage } from "./pages/AuthPages";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage";
@@ -25,6 +26,7 @@ export function AppRoutes() {
         <Route path="meetings/:meetingId" element={<MeetingDetailPage />} />
         <Route path="action-items" element={<ActionItemsPage />} />
         <Route path="search" element={<SearchPage />} />
+        <Route path="ask" element={<AskPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

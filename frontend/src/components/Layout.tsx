@@ -91,14 +91,14 @@ export function Layout() {
             <Search size={18} /> Search
             <kbd className="nav-kbd" aria-hidden>Ctrl K</kbd>
           </NavLink>
+          <NavLink to="/ask" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+            <MessageSquareText size={18} /> Ask your meetings
+          </NavLink>
 
           <div className="nav-section-label">Coming next</div>
-          {/* Visible but not clickable: these arrive in later milestones. They
-              are labelled rather than shipped as empty pages, so nothing in the
+          {/* Visible but not clickable: this arrives in a later milestone. It is
+              labelled rather than shipped as an empty page, so nothing in the
               UI pretends to work before it does. */}
-          <span className="nav-item disabled" aria-disabled="true" title="Available in milestone M8">
-            <MessageSquareText size={18} /> Ask your meetings <span className="nav-soon">M8</span>
-          </span>
           <span className="nav-item disabled" aria-disabled="true" title="Available in milestone M9">
             <Workflow size={18} /> Agent follow-ups <span className="nav-soon">M9</span>
           </span>

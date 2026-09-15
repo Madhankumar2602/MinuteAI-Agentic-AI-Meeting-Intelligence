@@ -94,3 +94,14 @@ describe("matchStrength", () => {
     expect(matchStrength(-0.2).label).toBe("Weak match");
   });
 });
+
+describe("citations", () => {
+  it("splits an answer into text and citation numbers, and links each source to the right place", async () => {
+    const { splitCitations, sourceHref } = await import("./ask");
+    expect(splitCitations("A [1]. B [2][3].")).toEqual(["A ", 1, ". B ", 2, 3, "."]);
+    expect(splitCitations("No citations")).toEqual(["No citations"]);
+    const base = { number: 1, meeting_id: "m1", meeting_title: "T", meeting_date: "2026-09-10T10:00:00Z", text: "x", score: 0.5 };
+    expect(sourceHref({ ...base, kind: "transcript", char_start: 5, char_end: 9 })).toBe("/meetings/m1?tab=transcript&from=5&to=9");
+    expect(sourceHref({ ...base, kind: "decision", char_start: null, char_end: null })).toBe("/meetings/m1");
+  });
+});
