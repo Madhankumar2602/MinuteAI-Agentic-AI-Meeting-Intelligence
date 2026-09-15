@@ -44,7 +44,7 @@ from app.core.exceptions import AppError
 from app.core.logging import configure_logging, get_logger
 from app.db.models import Meeting, MeetingStatus
 from app.services.embeddings.base import EmbeddingProvider, EmbeddingUnavailableError
-from app.services.embeddings.indexing import index_meeting
+from app.services.embeddings.indexing import index_meeting, index_minutes
 from app.services.intelligence import (
     is_result_current,
     result_counts,
@@ -294,8 +294,12 @@ class ProcessingWorker:
                         index = await index_meeting(
                             db, meeting_id=meeting_id, embedder=self._embedder_factory()
                         )
+                        minutes_index = await index_minutes(
+                            db, meeting_id=meeting_id, embedder=self._embedder_factory()
+                        )
                         outcome = await result_counts(db, meeting_id)
                         result = {
+                            "minutes_chunks": minutes_index.chunks,
                             **outcome.as_job_result(),
                             "chunks": index.chunks,
                             "mom_pdf": await self._generate_minutes_pdf(db, job, meeting_id),
@@ -346,6 +350,13 @@ class ProcessingWorker:
 
                     # Stage 3: the M2 extraction pipeline, unchanged.
                     outcome = await run_extraction(db, meeting_id=meeting_id, llm=llm)
+
+                    # Stage 4 (M8): embed the minutes for Ask-your-meetings.
+                    # Inside the try: an embedding failure is retried, and the
+                    # retry finds the extraction current and only indexes.
+                    minutes_index = await index_minutes(
+                        db, meeting_id=meeting_id, embedder=self._embedder_factory()
+                    )
                 except Exception as exc:
                     await self._handle_failure(db, job, meeting_id, exc, log_ctx)
                     return
@@ -355,6 +366,7 @@ class ProcessingWorker:
                     **outcome.as_job_result(),
                     "transcribed": transcribed,
                     "chunks": index.chunks,
+                    "minutes_chunks": minutes_index.chunks,
                     "mom_pdf": await self._generate_minutes_pdf(db, job, meeting_id),
                 }
                 if await self.store.complete(job=job, worker_id=self.worker_id, result=result):

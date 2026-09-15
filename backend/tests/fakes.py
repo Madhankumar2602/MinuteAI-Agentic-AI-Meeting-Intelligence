@@ -115,6 +115,8 @@ class FakeLLMProvider:
         healthy: bool = True,
     ) -> None:
         self.extraction = extraction or platform_sync_extraction()
+        # For Ask-your-meetings (M8): what the model "answers". Set per test.
+        self.answer = None
         self.error = error
         self.healthy = healthy
         self.calls: list[dict] = []
@@ -127,12 +129,25 @@ class FakeLLMProvider:
         schema: type[T],
         temperature: float = 0.1,
     ) -> StructuredResult[T]:
-        self.calls.append({"prompt": prompt, "schema": schema.__name__})
+        self.calls.append(
+            {"prompt": prompt, "schema": schema.__name__, "system": system_instruction}
+        )
         if self.error is not None:
             raise self.error
         # Round-trip through JSON so the fake exercises the same validation
         # path as a real provider response.
-        data = schema.model_validate_json(self.extraction.model_dump_json())
+        if schema.__name__ == "GroundedAnswer":
+            from app.schemas.ask import GroundedAnswer
+
+            # A callable receives the prompt, so a test can cite whichever
+            # number retrieval gave the passage it expects.
+            chosen = self.answer(prompt) if callable(self.answer) else self.answer
+            answer = chosen or GroundedAnswer(
+                answerable=True, answer="According to the minutes [1].", cited_sources=[1]
+            )
+            data = schema.model_validate_json(answer.model_dump_json())
+        else:
+            data = schema.model_validate_json(self.extraction.model_dump_json())
         return StructuredResult(
             data=data,
             provider=self.name,

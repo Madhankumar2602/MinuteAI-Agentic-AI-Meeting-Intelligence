@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Meeting, MeetingChunk, Transcript
+from app.db.models import ChunkSource, Meeting, MeetingChunk, Transcript
 from app.services.embeddings.chunking import CHUNKER_VERSION
 from app.services.embeddings.search import semantic_search
 from tests.fakes import PLATFORM_SYNC, FakeEmbedder
@@ -26,9 +26,11 @@ async def _processed_meeting(
     return user, headers, meeting
 
 
-async def _chunk_count(db: AsyncSession, meeting_id: str) -> int:
+async def _chunk_count(db: AsyncSession, meeting_id: str, kind=ChunkSource.TRANSCRIPT) -> int:
     return await db.scalar(
-        select(func.count()).where(MeetingChunk.meeting_id == uuid.UUID(meeting_id))
+        select(func.count()).where(
+            MeetingChunk.meeting_id == uuid.UUID(meeting_id), MeetingChunk.source_kind == kind
+        )
     )
 
 
@@ -53,7 +55,10 @@ async def test_processing_indexes_the_transcript_as_exact_slices(
     chunks = (
         await db_session.scalars(
             select(MeetingChunk)
-            .where(MeetingChunk.meeting_id == uuid.UUID(meeting["id"]))
+            .where(
+                MeetingChunk.meeting_id == uuid.UUID(meeting["id"]),
+                MeetingChunk.source_kind == ChunkSource.TRANSCRIPT,
+            )
             .order_by(MeetingChunk.chunk_index)
         )
     ).all()
@@ -124,11 +129,13 @@ async def test_chunks_are_deleted_with_their_meeting(
         make_user, auth_headers, create_meeting, put_transcript, process_and_wait
     )
     assert await _chunk_count(db_session, meeting["id"]) == 3
+    assert await _chunk_count(db_session, meeting["id"], ChunkSource.DECISION) == 2
 
     assert (
         await client.delete(f"/api/v1/meetings/{meeting['id']}", headers=headers)
     ).status_code == 204
     assert await _chunk_count(db_session, meeting["id"]) == 0
+    assert await _chunk_count(db_session, meeting["id"], ChunkSource.DECISION) == 0
 
 
 async def test_embedding_failure_is_retried_and_extraction_waits(

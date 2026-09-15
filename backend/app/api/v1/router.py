@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     action_items,
+    ask,
     auth,
     dashboard,
     intelligence,
@@ -24,3 +25,4 @@ api_router.include_router(media.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(search.router)
 api_router.include_router(mom.router)
+api_router.include_router(ask.router)

@@ -129,6 +129,17 @@ class Settings(BaseSettings):
     embedding_model_revision: str = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
     embedding_batch_size: int = Field(default=32, ge=1, le=256)
 
+    # ---- Ask your meetings / RAG (M8, ADR 0014) ------------------------------
+    # Passages retrieved per question and shown to the model.
+    rag_top_k: int = Field(default=8, ge=1, le=30)
+    # At most this many passages from any one meeting, so one long meeting
+    # cannot crowd out the others in cross-meeting questions.
+    rag_max_per_meeting: int = Field(default=4, ge=1, le=30)
+    # Below this cosine similarity nothing retrieved is related enough to be
+    # worth an LLM call; the answer is "not in your meetings". Calibrated on the
+    # M6 live checks (unrelated passages < 0.2).
+    rag_min_score: float = Field(default=0.2, ge=-1, le=1)
+
     # ---- Validation --------------------------------------------------------
     @model_validator(mode="after")
     def _check_storage_backend(self) -> Self:

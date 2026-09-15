@@ -34,6 +34,8 @@ class JobResult(BaseModel):
     # Transcript chunks in the search index after this run (M6). Absent on
     # jobs that finished before M6.
     chunks: int | None = None
+    # Minutes passages indexed for Ask-your-meetings (M8). Absent before M8.
+    minutes_chunks: int | None = None
     # Whether the Minutes of Meeting PDF was stored (M7). Absent before M7.
     mom_pdf: bool | None = None
     decisions: int

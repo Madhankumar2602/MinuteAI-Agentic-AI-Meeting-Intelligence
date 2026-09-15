@@ -30,7 +30,7 @@ from datetime import datetime
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Meeting, MeetingChunk, Transcript
+from app.db.models import ChunkSource, Meeting, MeetingChunk, Transcript
 from app.services.embeddings.chunking import CHUNKER_VERSION
 
 # Candidates the HNSW scan considers per step (pgvector default 40). Higher
@@ -47,8 +47,10 @@ class SearchHit:
     meeting_date: datetime
     chunk_index: int
     content: str
-    char_start: int
-    char_end: int
+    char_start: int | None  # transcript chunks only
+    char_end: int | None
+    source_kind: ChunkSource
+    source_ref: uuid.UUID | None
     # Cosine similarity in [-1, 1]; vectors are normalised, so 1 - distance.
     score: float
 
@@ -61,7 +63,15 @@ async def semantic_search(
     model: str,
     limit: int = 10,
     meeting_id: uuid.UUID | None = None,
+    meeting_ids: list[uuid.UUID] | None = None,
+    sources: tuple[ChunkSource, ...] = (ChunkSource.TRANSCRIPT,),
 ) -> list[SearchHit]:
+    """Nearest chunks among the owner's meetings.
+
+    ``sources`` defaults to transcript passages (the M6 search page); RAG (M8)
+    passes every kind. Minutes chunks carry the transcript hash they were
+    extracted from, so the same join hides them once the transcript changes.
+    """
     # SET LOCAL lasts only until the end of the current transaction, so these
     # settings cannot leak to other requests sharing the pooled connection.
     await db.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
@@ -80,12 +90,15 @@ async def semantic_search(
             Meeting.owner_id == owner_id,
             MeetingChunk.embedding_model == model,
             MeetingChunk.chunker_version == CHUNKER_VERSION,
+            MeetingChunk.source_kind.in_(sources),
         )
         .order_by(distance)
         .limit(limit)
     )
     if meeting_id is not None:
         stmt = stmt.where(MeetingChunk.meeting_id == meeting_id)
+    if meeting_ids is not None:
+        stmt = stmt.where(MeetingChunk.meeting_id.in_(meeting_ids))
 
     rows = (await db.execute(stmt)).all()
     return [
@@ -98,6 +111,8 @@ async def semantic_search(
             content=chunk.content,
             char_start=chunk.char_start,
             char_end=chunk.char_end,
+            source_kind=chunk.source_kind,
+            source_ref=chunk.source_ref,
             score=round(1.0 - float(dist), 4),
         )
         for chunk, title, meeting_date, dist in rows

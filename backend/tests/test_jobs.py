@@ -110,6 +110,8 @@ async def test_worker_completes_job_and_records_result(
         "participants": 4,
         "warnings": [],
         "chunks": 3,  # ~320 words at 160 (fake) tokens per chunk, with overlap
+        # summary + 2 decisions + 3 action items + 2 pending + next steps (M8)
+        "minutes_chunks": 9,
         "mom_pdf": True,  # the Minutes of Meeting PDF was stored (M7)
     }
     assert [e["type"] for e in job["events"]] == [
@@ -190,7 +192,8 @@ async def test_transient_llm_error_is_retried_with_backoff_then_succeeds(
         "mom_pdf_generated",
         "completed",
     ]
-    assert fake_embedder.document_calls == [3]  # one batch of 3 chunks across both attempts
+    # Transcript (3) embedded once across both attempts; minutes (9) after extraction.
+    assert fake_embedder.document_calls == [3, 9]
     assert await _meeting_status(client, meeting["id"], headers) == "completed"
 
 

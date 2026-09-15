@@ -85,5 +85,6 @@ async def search(
     return SearchResponse(
         query=query,
         model=embedder.model,
+        # Transcript passages only (the default), so offsets are always present.
         results=[SearchResult.model_validate(h, from_attributes=True) for h in hits],
     )

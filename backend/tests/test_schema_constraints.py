@@ -57,4 +57,5 @@ async def test_all_enum_columns_have_check_constraints(db_session) -> None:
         "ck_decisions_decision_status",
         "ck_action_items_action_item_priority",
         "ck_action_items_action_item_status",
+        "ck_meeting_chunks_chunk_source",
     }
