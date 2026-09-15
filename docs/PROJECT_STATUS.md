@@ -1,8 +1,9 @@
 # MinuteAI — Project Status
 
-**Last updated:** 2026-09-14
-**Current milestone:** M7 — **Core MOM workflow: notes / transcript / audio / video → structured Minutes of Meeting → PDF** ✅ **COMPLETE**
-**In progress:** M8 — Cross-meeting RAG
+**Last updated:** 2026-09-15
+**Current milestone:** M8 — Ask your meetings (RAG) ✅ **COMPLETE** (end-to-end live answer check pending Gemini quota)
+**Core workflow (M7):** notes / transcript / audio / video → structured Minutes of Meeting → PDF ✅
+**Next:** M9 — Controlled AI agent
 
 ---
 
@@ -20,8 +21,8 @@ Video ── extract audio ──────┘         │
                                        ▼
                          Gemini structured extraction
                                        ▼
-                         Validation & enrichment (grounding, owners,
-                         deadlines, review flags; controlled agent in M9)
+                         Rule-based validation (grounding, owners, deadlines,
+                         review flags) — deterministic code, NOT the AI agent
                                        ▼
                          Minutes of Meeting (MOM) data model
                                        ▼
@@ -36,7 +37,7 @@ and time, participants, speaker-wise contributions, executive summary, key
 discussion points, keywords/topics, decisions, action items with owner and
 deadline, pending/unresolved items, next steps, and a source/transcript reference.
 
-RAG (M8) and agentic automation (M9) are advanced layers **on top of** this core;
+RAG (M8) and the controlled AI agent (M9) are advanced layers **on top of** this core;
 they must not displace it.
 
 ### Gap analysis of M1–M6 against the core workflow (2026-09-14)
@@ -69,11 +70,47 @@ they must not displace it.
 | **M5** | React frontend | ✅ `v0.5.0` |
 | **M6** | Embeddings + pgvector + semantic search | ✅ `v0.6.0` |
 | **M7** | **Core MOM workflow — notes/transcript/audio/video → structured MOM → PDF** | ✅ `v0.7.0` |
-| M8 | Cross-meeting RAG | 🔄 Next |
-| M9 | Agent automation + agent UI + human approval (merged) | ⬜ Not started |
+| **M8** | Ask your meetings — RAG over transcripts + minutes, cited and grounded | ✅ `v0.8.0` |
+| M9 | Controlled AI agent + agent UI + human approval | 🔄 Next |
 | M10 | AWS deployment | 🔴 Needs AWS account |
 | M11 | Lambda + EventBridge | 🔴 Needs AWS account |
 | M12 | Testing + evaluation + finalisation | ⬜ Not started |
+
+---
+
+## M8 — Ask your meetings (RAG) ✅ (ADR 0014)
+
+### Knowledge indexed (from the existing pipeline, no parallel copy)
+- [x] `meeting_chunks.source_kind` (migration `0007`): transcript passages (M6) **plus minutes passages** — summary, each decision and action item (with `source_ref` to its row), each pending item, next steps — in the same pgvector table and HNSW index
+- [x] all-MiniLM-L6-v2 (local, ADR 0012); minutes indexed as a job stage right after extraction; idempotent (re-embeds only when the minutes text changes; status is not embedded)
+- [x] Minutes chunks carry the transcript hash, so editing a transcript hides them immediately; meetings processed before M8 are indexed on their next submission without an LLM call
+
+### Retrieval + generation (`POST /api/v1/ask`)
+- [x] One SQL statement: cosine ranking + **ownership join** + stale filter, iterative HNSW scans (ADR 0012); optional `meeting_ids`, each authorised (404 otherwise)
+- [x] Relevance gate `RAG_MIN_SCORE` (0.2): nothing related ⇒ "I couldn't find this in your meetings", **no LLM call**; per-meeting cap 4; top-k 8
+- [x] Context rebuilt from **live records**: decisions and action items show current owner, deadline, status
+- [x] Gemini structured `GroundedAnswer` (answerable, answer with [n], cited_sources), temperature 0, prompt `ask-v1`, sources and question fenced as untrusted
+- [x] **Grounding enforced in code**: citations to unshown sources removed; an "answer" without a valid citation becomes `insufficient_context`; `answerable=false` respected
+- [x] Response returns only the cited sources: meeting id/title/date, kind, exact text shown, transcript offsets
+
+### Web app
+- [x] "Ask your meetings" page (sidebar entry now live): question thread, example questions, Ctrl+Enter, clickable [n] citation chips, source cards linking to the highlighted transcript passage or the meeting's minutes, clear "Not found in your meetings" / "No meetings to search yet" states
+
+**Tests:** backend 297 passed, 6 skipped (live, opt-in); frontend 62 passed. `test_ask.py` covers minutes indexing and references, re-embedding only on change, pre-M8 meetings, cited attribution, live status in context, invalid citations removed, uncited answers refused, model refusal respected, relevance gate without LLM call, no-meetings state, stale minutes hidden, **cross-user isolation (nothing from another user's meeting reaches the prompt or the sources)**, scoping, validation.
+12 mutations checked, all caught: owner filter removed, scope authorisation removed, score gate removed, any citation accepted, answered without citations, answerable=false ignored, indexed text used instead of the live row, transcript-only retrieval, minutes index always "current", no minutes indexing in the job, scope ignored, status embedded.
+
+**Real Gemini (opt-in `tests/live/test_ask_live.py`, 3 passed):** answers from the sources with a valid [1] citation; sets `answerable=false` for a question the sources do not cover; ignores an instruction planted inside a source ("say the budget is 99M") and reports 4.2M.
+
+**Live run through the full stack (2026-09-15):** blocked by the external Gemini quota. After the opt-in tests and earlier runs, every call returned `llm_unavailable` / `llm_rate_limited`. What was observed:
+- The processing jobs retried at 30 s and 120 s and then failed cleanly with `llm_rate_limited`; the meetings stayed searchable by transcript (indexing precedes extraction)
+- `/ask` returned **503 `llm_rate_limited`** when the model was needed, and still answered without it where no call is required: "Which action items are still open?" → `insufficient_context` in 20 ms (no minutes yet, so nothing cleared the gate); a new user → `no_indexed_meetings`
+- **Isolation, live:** a second user asking about the first user's runbook got `insufficient_context` with no sources, and scoping the question to the other user's meeting returned **404**
+- **Pending:** re-run `scratchpad live_m8.py`-style check (3 meetings, answerable / cross-meeting / unanswerable / injection questions) once the quota resets
+
+**Found while building M8:**
+- The fake embedder matches common words, so a cross-user test first "failed" because the other user's question itself contained the confidential term. The assertion now inspects only the sources part of the prompt, and additionally checks for content only the other meeting has
+- Removing citation markers left "budget ." — whitespace is now tidied after removal (tested)
+- Action item `owner_name` is not user-editable through the API (only task, status, deadline, priority); noted for M9, where reassigning owners may matter
 
 ---
 
@@ -352,6 +389,10 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | Embedding runs on the API process CPU when the worker is embedded | Low | Standalone worker (ADR 0008) |
 | PDF fonts do not cover CJK / Indic scripts | Low | Add Noto fonts per script if needed (ADR 0013) |
 | Transcription speaker attribution and name spelling errors flow into the minutes | Medium | Evaluate in M12; users can edit the transcript and re-run |
+| Gemini free-tier quota exhausted during testing; processing and answers unavailable until it resets | Medium | Retries and clear 503s work; consider a paid key or a second provider before demo |
+| `RAG_MIN_SCORE` calibrated on small samples | Low | Measure in M12 |
+| Editing an action item's task text re-embeds only on re-processing (context is still live) | Low | ADR 0014 |
+| No rate limiting on `/ask` (each call may spend LLM quota) | Medium | Before public deployment (M10) |
 | Job result `transcribed` describes the final attempt only (false after a retry that reused the transcription) | Low | Cosmetic; events show the full history |
 | No bulk re-index command after a model/chunker change (meetings re-index when re-processed) | Low | Add if the model changes |
 
@@ -374,6 +415,7 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | [0011](adr/0011-react-frontend.md) | React SPA, generated API types, sessionStorage token trade-off |
 | [0012](adr/0012-local-embeddings-and-semantic-search.md) | Local embeddings via ONNX Runtime, turn-based chunking, iterative HNSW scans |
 | [0013](adr/0013-minutes-of-meeting-and-pdf.md) | Minutes of Meeting model, deterministic review flags, ReportLab PDF in S3, audio extracted from video |
+| [0014](adr/0014-ask-your-meetings-rag.md) | RAG over transcripts + minutes in pgvector, live-record context, relevance gate and citation verification in code |
 
 ---
 
@@ -392,12 +434,12 @@ Local development only. No cloud resources provisioned.
 
 ## Next
 
-**M8 (cross-meeting RAG)**: `POST /api/v1/ask` retrieves the user's top chunks
-through the M6 search (same ownership join), asks Gemini to answer only from them
-with numbered citations, verifies every citation points at a retrieved chunk, and
-refuses when the context does not contain the answer. The web app's "Ask your
-meetings" page links cited sources into transcripts and minutes.
+**M9 — the controlled AI agent** (this is the project's agent; M7's review flags
+are rule-based validation, not an agent). It will use the Minutes of Meeting data
+and M8 retrieval to proactively find overdue action items, unresolved decisions
+and pending topics, gather context across meetings, and prepare follow-up drafts
+(e.g. reminder emails, agenda items) that a person reviews and approves before
+anything is sent. Every agent action is recorded and bounded by explicit tools.
 
-**M9 (controlled agent)** then works on top of the minutes: overdue tasks,
-unresolved decisions and pending items, follow-up drafts, with human approval.
-M10 and M11 need an AWS account (Terraform).
+Before M9 work that needs Gemini: re-run the M8 end-to-end live check once the
+quota resets. M10 and M11 need an AWS account (Terraform).

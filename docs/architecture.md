@@ -1,7 +1,7 @@
 # MinuteAI — Architecture
 
 > Living document. Updated as each milestone lands.
-> Current state: **M7 complete** (core MOM workflow). Sections marked *(planned)* are not built yet.
+> Current state: **M8 complete** (core MOM workflow + Ask your meetings). Sections marked *(planned)* are not built yet.
 
 ## 0. The central product workflow
 
@@ -23,7 +23,9 @@ video ─► audio track ┘                (speaker labels)   (Gemini)  (determ
 | Audio extraction from video | `services/transcription.py` (PyAV) | M7 |
 | Transcription with speaker labels | Gemini, `services/transcription.py` | M4 |
 | Structured extraction | Gemini, `services/intelligence.py`, prompt `extract-v2` | M2, M7 |
-| Validation & enrichment | `services/intelligence.py` normalisation, `services/grounding.py`, MOM review flags | M2, M7 (controlled agent: M9) |
+| Rule-based validation (not the AI agent) | `services/intelligence.py` normalisation, `services/grounding.py`, MOM review flags | M2, M7 |
+| Ask your meetings (RAG, advanced layer) | `services/rag.py`, `POST /api/v1/ask` | M8 |
+| Controlled AI agent (advanced layer) | planned: uses MOM data + RAG; overdue tasks, unresolved decisions/topics, follow-up drafts with human approval | M9 |
 | MOM data model | `services/mom/builder.py` → `schemas/mom.py` | M7 |
 | PDF + storage + download | `services/mom/pdf.py`, `services/mom/documents.py`, `GET/POST /meetings/{id}/mom…` | M7 |
 | Search index (advanced layer) | `services/embeddings/` | M6 |
@@ -85,6 +87,7 @@ video ─► audio track ┘                (speaker labels)   (Gemini)  (determ
 | `app/services/job_store.py` | DynamoDB job queue: submit with lock, claim, lease, requeue, finish, recover | Business data |
 | `app/services/storage.py` | S3: presigned POST with policy, head, ranged read, download, prefix delete | Decide what is valid |
 | `app/services/media_validation.py` | MIME allow-list, file-signature sniffing, filename sanitising | I/O |
+| `app/services/rag.py` | Ask your meetings: retrieve across chunk kinds, relevance gate, live-record context, grounded Gemini answer, citation verification (ADR 0014) | Store questions or answers |
 | `app/services/mom/` | Assemble `MinutesOfMeeting` from stored records, deterministic review flags, ReportLab PDF, content-addressed PDF storage (ADR 0013) | Call the LLM |
 | `app/services/audio.py` | Extract speech-grade audio from video (PyAV), exact durations | Transcribe |
 | `app/services/embeddings/` | Turn-based chunking, local MiniLM embeddings (ONNX Runtime), idempotent indexing, owner-filtered HNSW search (ADR 0012) | Call external APIs |
@@ -139,6 +142,7 @@ Worker loop (every 2 s, or immediately on notify)
   ├─ results already current (recovered after a late crash) → COMPLETED cached
   ├─ index_meeting (§5a): chunk + embed, no-op when current → event indexing_completed
   ├─ run_extraction (§6)
+  ├─ index_minutes (§5b): summary / decisions / action items / pending / next steps → meeting_chunks; no-op when unchanged
   └─ ensure_minutes_pdf (§6a): build MOM → render → S3 (reuse by fingerprint) → event mom_pdf_generated; never fails the job
        ├─ ok                     → TransactWrite: job COMPLETED + delete lock   → meeting completed
        ├─ transient, attempts left → job QUEUED, retry at 30 s × 4^(n−1)        → meeting queued
@@ -216,6 +220,34 @@ GET /api/v1/search?q=&limit=&meeting_id=
 - Scoped search (`meeting_id`) authorises the meeting first: 404 if not visible.
 - The web app's Search page (Ctrl/⌘ K) links each result to
   `/meetings/{id}?tab=transcript&from=&to=`, which highlights and scrolls to the passage.
+
+## 5b. Ask your meetings (M8 — ADR 0014)
+
+```
+POST /api/v1/ask {question, meeting_ids?}
+  │ meeting_ids? → authorize each (404)
+  │ embed question (MiniLM, local)
+  ▼
+semantic_search(sources = transcript + minutes kinds)      owner join · sha filter · HNSW iterative scan
+  │ select_hits: score ≥ 0.2 · ≤ 4 per meeting · top 8
+  ├─ none ──► insufficient_context / no_indexed_meetings   (no LLM call)
+  ▼
+build_sources: decisions & action items re-read from their rows (current owner, deadline, status)
+  ▼
+Gemini → GroundedAnswer {answerable, answer with [n], cited_sources}   prompt ask-v1, T = 0
+  ▼
+verify_citations: drop unknown [n] · no valid citation ⇒ insufficient_context · respect answerable = false
+  ▼
+{status, answer, sources: only cited (meeting, date, kind, text, offsets), retrieved, model, prompt_version}
+```
+
+| Chunk kind | Built from | Offsets | Context shown to the model |
+|---|---|---|---|
+| transcript | transcript slice | yes | chunk text |
+| summary | summary + key points + keywords | – | chunk text |
+| decision | `decisions` row (`source_ref`) | – | live row: text, context, status |
+| action_item | `action_items` row (`source_ref`) | – | live row: task, owner, deadline, status |
+| pending / next_steps | `summaries` JSONB | – | chunk text |
 
 ## 6. Extraction pipeline (M2 — ADR 0007)
 
@@ -300,7 +332,7 @@ round-trip cleanly), original wording kept beside resolved values (`owner_name`,
 
 **DynamoDB** — see §4 and ADR 0008 for the job table design.
 
-| `meeting_chunks` (M6) | meeting_id (CASCADE), chunk_index, content, char_start, char_end, token_count, transcript_sha256, embedding_model, chunker_version, embedding `vector(384)` | UNIQUE (meeting_id, chunk_index); HNSW `vector_cosine_ops` |
+| `meeting_chunks` (M6, M8) | meeting_id (CASCADE), source_kind, source_ref, chunk_index, content, char_start/char_end (transcript only), token_count, transcript_sha256, embedding_model, chunker_version, embedding `vector(384)` | UNIQUE (meeting_id, source_kind, chunk_index); HNSW `vector_cosine_ops`; CHECK on source_kind |
 
 **Planned:** `agent_alerts`,
 `agent_followups` (M8); `meeting_shares` (ADR 0004).
@@ -380,6 +412,7 @@ and validated at start-up.
 
 | Group | Variables |
 |---|---|
+| RAG | `RAG_TOP_K`, `RAG_MAX_PER_MEETING`, `RAG_MIN_SCORE` |
 | Embeddings | `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION` (pinned commit), `EMBEDDING_BATCH_SIZE` |
 | LLM | `GEMINI_API_KEY`, `GEMINI_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `TRANSCRIPT_MAX_CHARS` |
 | Jobs | `DYNAMODB_JOBS_TABLE`, `DYNAMODB_AUTO_CREATE_TABLES` (false in AWS) |
@@ -412,6 +445,7 @@ and validated at start-up.
 | Storage safety | Fake `~/.aws` and `AWS_PROFILE`; AWS endpoints rejected; per-request host guard; AST scan for stray boto3 clients | `test_storage_safety.py` |
 | Audio | Real media built with PyAV: Opus output, exact duration, no-audio video | `test_audio.py` |
 | Minutes + PDF | Real routes, storage, and job; PDFs downloaded through presigned links and read back with pypdf; escaping, fonts, pagination, reuse, cleanup, non-fatal failure, review flags | `test_mom.py` |
+| Ask / RAG | Real routes, pgvector, job; fake embedder + prompt-aware fake LLM: attribution, grounding, citation verification, relevance gate, live-record context, isolation, scoping; opt-in real-Gemini grounding tests | `test_ask.py`, `tests/live/test_ask_live.py` |
 | Chunking | Pure logic with a word counter: slices, budgets, overlap, long turns, CRLF | `test_chunking.py` |
 | Embedding model | **Real model**: parity with sentence-transformers reference vectors, batching, token additivity, chunks fit the model | `test_embedding_model.py` |
 | Search | Indexing via the job, stale chunks hidden, isolation, scoping, retries; **HNSW filtering forced onto the index with an `EXPLAIN` check and a control run** | `test_search.py` |
@@ -447,5 +481,6 @@ and validated at start-up.
 | [0011](adr/0011-react-frontend.md) | React SPA: generated API types, TanStack Query polling, hand-written design system, sessionStorage token trade-off |
 | [0012](adr/0012-local-embeddings-and-semantic-search.md) | Local MiniLM via ONNX Runtime, turn-based chunks, provenance-checked index, iterative HNSW scans for filtered search |
 | [0013](adr/0013-minutes-of-meeting-and-pdf.md) | Minutes of Meeting model, deterministic review flags, ReportLab PDF stored by fingerprint, audio extracted from video |
+| [0014](adr/0014-ask-your-meetings-rag.md) | RAG over transcripts + minutes in pgvector, live-record context, relevance gate and citation verification in code |
 
 Milestone status: [PROJECT_STATUS.md](PROJECT_STATUS.md).

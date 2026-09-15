@@ -66,10 +66,11 @@ object feeds `GET /meetings/{id}/mom`, the web Minutes tab, and the PDF.
 - "Next steps" fall back to open action items when none were stated, and the MOM
   marks them as derived.
 
-### 4. Validation & enrichment is deterministic code
+### 4. Validation is deterministic code, not the project's AI agent
 
-The "agentic validation" stage of the core flow is `review_minutes()`, a pure
-function that raises the flags a careful minute-taker would check before sending:
+The validation stage of the core flow (called "agentic validation" in the original
+workflow sketch) is `review_minutes()`: rule-based validation logic, a pure function
+that raises the flags a careful minute-taker would check before sending:
 
 - an open action item with no owner;
 - an open action item with no deadline, or wording that could not be resolved to
@@ -78,9 +79,10 @@ function that raises the flags a careful minute-taker would check before sending
 - unnamed speakers (`Speaker 2`);
 - a transcript edited since extraction.
 
-This is deliberately not presented as an AI agent. It is predictable, testable,
-and free. The controlled LLM agent (M9) can add suggestions at this stage later,
-but it does not replace these checks.
+This is **not the project's AI agent** and is never described as one. It is
+predictable, testable, and free. The controlled AI agent is M9: it uses the MOM data
+and the M8 retrieval to find overdue tasks and unresolved decisions or topics, and
+drafts follow-ups that a person approves. These checks stay in place alongside it.
 
 ### 5. PDF: ReportLab, embedded DejaVu fonts, content-addressed storage
 
