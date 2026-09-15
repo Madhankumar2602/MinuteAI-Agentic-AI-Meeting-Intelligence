@@ -7,8 +7,8 @@
 
 ## Context
 
-M6 makes transcripts searchable by meaning and provides the retrieval step M7's
-RAG answers will use. ADR 0002 had already chosen the store (pgvector) and the
+M6 makes transcripts searchable by meaning and provides the retrieval step that
+RAG answers use. ADR 0002 had already chosen the store (pgvector) and the
 model (`sentence-transformers/all-MiniLM-L6-v2`, 384 dimensions). Four questions
 were still open:
 
@@ -31,7 +31,7 @@ normalisation, with truncation at 256 tokens.
 | | sentence-transformers + PyTorch | ONNX Runtime (chosen) |
 |---|---|---|
 | Install size | ~1 GB (torch) | ~60 MB |
-| Container / Lambda (M10–M11) | Heavy image, slow cold start | Small |
+| Container / serverless | Heavy image, slow cold start | Small |
 | Output | Reference | **Identical within 6.4 × 10⁻⁷** (tested) |
 | Code we own | None | ~60 lines of pooling and batching |
 
@@ -62,7 +62,7 @@ sentence-transformers overrides), or if normalisation is dropped.
   chunk starts with the tail of the previous one (up to 32 tokens) so an exchange
   that straddles a boundary can still be retrieved whole.
 - **Every chunk is an exact slice** of the transcript (`char_start`/`char_end`), so
-  a result can open the transcript at the right place, and M7 can cite precisely.
+  a result can open the transcript at the right place, and answers can cite precisely.
 - **Counts come from the model's tokenizer**, not a words-per-token estimate. Piece
   counts are added rather than recounted; this is exact because WordPiece splits
   on whitespace first, and a test verifies it with the real tokenizer.
@@ -71,7 +71,7 @@ sentence-transformers overrides), or if normalisation is dropped.
   `python -m app.evaluation.retrieval` (18 paraphrased questions, 2 meetings)
   gives hit@1 0.94 and MRR 0.96 at 160, against a chance hit@1 of 0.19. This set
   is too small to rank chunk sizes: with only a handful of chunks, larger chunks
-  win by default. It shows retrieval works; M12 evaluates it properly.
+  win by default. It shows retrieval works.
 
 The chunker is versioned (`CHUNKER_VERSION = "turns-v1"`). Changing the
 algorithm or its parameters means bumping it.
@@ -135,7 +135,7 @@ user's history is large.
 
 - One more runtime dependency set (`onnxruntime`, `tokenizers`, `huggingface-hub`,
   `numpy`, `pgvector`). About 90 MB of model files are downloaded on first use.
-  M10 should bake them into the image rather than fetch them at cold start.
+  Container images should include them rather than fetch them at cold start.
 - Embedding uses API-process CPU when the worker is embedded: about 1 s to load,
   then roughly 25 ms per query and seconds for a long meeting. The standalone
   worker (ADR 0008) moves indexing off the API if needed.
@@ -143,7 +143,7 @@ user's history is large.
   language (Strong / Good / Weak), from bands observed in live checks. Nothing is
   filtered by score.
 - A chunk of several turns scores lower than the single line that answers a
-  question, because the other turns dilute it. M7 may need line-level
+  question, because the other turns dilute it. Answers may benefit from line-level
   re-scoring inside the top chunks for precise citations.
 - Changing the model or chunker makes every stored chunk stale. Search ignores
   stale chunks, and re-processing rebuilds them. A bulk re-index command is not

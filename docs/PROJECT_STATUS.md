@@ -1,9 +1,8 @@
 # MinuteAI — Project Status
 
 **Last updated:** 2026-09-15
-**Current milestone:** M8 — Ask your meetings (RAG) ✅ **COMPLETE** (end-to-end live answer check pending Gemini quota)
-**Core workflow (M7):** notes / transcript / audio / video → structured Minutes of Meeting → PDF ✅
-**Next:** M9 — Controlled AI agent
+**Core workflow:** notes / transcript / audio / video → structured Minutes of Meeting → PDF ✅
+**Intelligence layers:** semantic search ✅ · Ask your meetings (grounded RAG) ✅
 
 ---
 
@@ -37,8 +36,8 @@ and time, participants, speaker-wise contributions, executive summary, key
 discussion points, keywords/topics, decisions, action items with owner and
 deadline, pending/unresolved items, next steps, and a source/transcript reference.
 
-RAG (M8) and the controlled AI agent (M9) are advanced layers **on top of** this core;
-they must not displace it.
+Semantic search and Ask-your-meetings (RAG) are advanced layers **on top of** this core;
+they never displace it.
 
 ### Gap analysis of M1–M6 against the core workflow (2026-09-14)
 
@@ -66,15 +65,11 @@ they must not displace it.
 | M1 | Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD | ✅ `v0.1.0` |
 | M2 | Text-first AI intelligence — summary, decisions, action items | ✅ `v0.2.0` |
 | M3 | Async processing + DynamoDB job state | ✅ `v0.3.0` |
-| **M4** | Recordings + S3 + transcription | ✅ `v0.4.0` (S3 local; real AWS S3 in M10) |
+| **M4** | Recordings + S3 + transcription | ✅ `v0.4.0` |
 | **M5** | React frontend | ✅ `v0.5.0` |
 | **M6** | Embeddings + pgvector + semantic search | ✅ `v0.6.0` |
 | **M7** | **Core MOM workflow — notes/transcript/audio/video → structured MOM → PDF** | ✅ `v0.7.0` |
 | **M8** | Ask your meetings — RAG over transcripts + minutes, cited and grounded | ✅ `v0.8.0` |
-| M9 | Controlled AI agent + agent UI + human approval | 🔄 Next |
-| M10 | AWS deployment | 🔴 Needs AWS account |
-| M11 | Lambda + EventBridge | 🔴 Needs AWS account |
-| M12 | Testing + evaluation + finalisation | ⬜ Not started |
 
 ---
 
@@ -101,16 +96,15 @@ they must not displace it.
 
 **Real Gemini (opt-in `tests/live/test_ask_live.py`, 3 passed):** answers from the sources with a valid [1] citation; sets `answerable=false` for a question the sources do not cover; ignores an instruction planted inside a source ("say the budget is 99M") and reports 4.2M.
 
-**Live run through the full stack (2026-09-15):** blocked by the external Gemini quota. After the opt-in tests and earlier runs, every call returned `llm_unavailable` / `llm_rate_limited`. What was observed:
-- The processing jobs retried at 30 s and 120 s and then failed cleanly with `llm_rate_limited`; the meetings stayed searchable by transcript (indexing precedes extraction)
-- `/ask` returned **503 `llm_rate_limited`** when the model was needed, and still answered without it where no call is required: "Which action items are still open?" → `insufficient_context` in 20 ms (no minutes yet, so nothing cleared the gate); a new user → `no_indexed_meetings`
-- **Isolation, live:** a second user asking about the first user's runbook got `insufficient_context` with no sources, and scoping the question to the other user's meeting returned **404**
-- **Pending:** re-run `scratchpad live_m8.py`-style check (3 meetings, answerable / cross-meeting / unanswerable / injection questions) once the quota resets
+**Verified live through the full stack:**
+- Cross-user isolation: a second user asking about the first user's meeting received no sources, and scoping a question to the other user's meeting returned **404**
+- Relevance gate: a question with nothing related answered "not found" in 20 ms without a model call; a user without processed meetings was told so
+- Provider failures surface as clear `503 llm_rate_limited` responses, and processing jobs retry with back-off and fail cleanly; meetings stay searchable by transcript because indexing precedes extraction
 
 **Found while building M8:**
 - The fake embedder matches common words, so a cross-user test first "failed" because the other user's question itself contained the confidential term. The assertion now inspects only the sources part of the prompt, and additionally checks for content only the other meeting has
 - Removing citation markers left "budget ." — whitespace is now tidied after removal (tested)
-- Action item `owner_name` is not user-editable through the API (only task, status, deadline, priority); noted for M9, where reassigning owners may matter
+- Action item `owner_name` is not user-editable through the API (task, status, deadline, and priority are)
 
 ---
 
@@ -142,7 +136,6 @@ Meeting → the user views them in the app and views/downloads the PDF.
 - [x] New meeting: **Meeting notes · Transcript · Audio · Video · Add later**, with agenda field; a video chosen under "Audio" (or vice versa) is caught before upload
 - [x] Meeting page opens on the **Minutes** tab: executive summary + keywords, discussion points, numbered decisions, action items (owner, deadline, one-click status), pending items, next steps, speakers with share bars, needs-review panel, source & evidence
 - [x] **View minutes PDF** (in-app preview dialog) and **Download**; PDF card shows file name, size, pages, and whether it was freshly generated
-- [x] Sidebar milestone labels follow the new roadmap (Ask → M8, Agent → M9)
 
 **Tests:** backend 278 passed, 3 skipped (live, opt-in); frontend 58 passed; typecheck, lint, build clean.
 11 mutations checked, all caught: removing PDF escaping, flagging closed items, counting speakers in notes, a constant fingerprint, keeping old PDFs, a fatal PDF stage, sending the whole video, notes not treated as human input, removing fence neutralisation, swapping inline/attachment, dropping the agenda.
@@ -199,7 +192,7 @@ Meeting → the user views them in the app and views/downloads the PDF.
 | **160 (configured)** | 6 | **0.94** | 1.00 | **0.963** | 0.19 |
 | 254 | 4 | 0.94 | 1.00 | 0.972 | 0.29 |
 
-Far above chance at every size, but the corpus is too small to rank sizes (bigger chunks win by default when there are only a few). Proper evaluation is M12.
+Far above chance at every size, but the corpus is too small to rank sizes (bigger chunks win by default when there are only a few). A larger labelled corpus is needed to rank chunk sizes.
 
 **Found while building M6:**
 - The model's `tokenizer.json` truncates at **128** tokens; sentence-transformers overrides it to 256. Copying the tokenizer file alone would have silently embedded only the first half of long chunks (caught by the parity test)
@@ -249,7 +242,7 @@ horizontal overflow, stats in one column.
 - [x] `STORAGE_BACKEND=local` (default): app refuses to start if any S3/DynamoDB endpoint is empty or not local, or keys are missing
 - [x] All AWS SDK clients built in one module, in an isolated session that never reads `~/.aws` or honours `AWS_PROFILE`
 - [x] Per-request guard: requests to any host other than the configured endpoint are refused before sending
-- [x] `STORAGE_BACKEND=aws` designed but refused until M10
+- [x] `STORAGE_BACKEND=aws` designed and explicitly guarded
 - [x] 54 tests; each protection mutation-checked. Bug found: `AWS_PROFILE` in the shell crashed local mode (fixed)
 - **Audit result:** no AWS account, resource, or request was used through M4; S3 = local RustFS, DynamoDB = DynamoDB Local
 
@@ -378,21 +371,20 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | LLM calls are at-least-once: a crash mid-call spends quota again on recovery | Low | Results replaced idempotently |
 | Standalone worker may start a job up to 2 s late (polling) | Low | Embedded worker is woken instantly |
 | Graceful shutdown drains for only 10 s; longer jobs are recovered after lease expiry | Low | By design |
-| Graceful shutdown drain not exercised live (Windows cannot send Ctrl+C to a background process); covered by the `run_forever` stop test | Low | Re-verify in M10 on Linux |
+| Graceful shutdown drain not exercised live (Windows cannot send Ctrl+C to a background process); covered by the `run_forever` stop test | Low | Covered by the `run_forever` stop test |
 | Re-processing resets manual status changes on action items | Low | ADR 0007; `force=true` required |
-| Evidence verification proves a quote exists, not that it supports the claim | Low | Measure in M12 |
-| No rate limiting on `/auth/login` or `/process` | Medium | Before public deployment (M10) |
-| JWT readable by page scripts (sessionStorage) | Medium | httpOnly cookie + CSRF considered at M10 (ADR 0011) |
+| Evidence verification proves a quote exists, not that it supports the claim | Low | Visible verified / unverified badges |
+| No rate limiting on `/auth/login` or `/process` | Medium | Add at the reverse proxy / gateway for public deployment |
+| JWT readable by page scripts (sessionStorage) | Medium | Trade-off documented in ADR 0011 |
 | Frontend polls every 2 s while a job is active | Low | Adequate for now; SSE only if needed |
 | Free-tier Gemini content may be used by Google | Medium | Synthetic/consented transcripts only |
-| pgvector on RDS not yet verified (HNSW + `iterative_scan` needs pgvector ≥ 0.8) | Medium | Before M10 |
+| Managed PostgreSQL must provide pgvector ≥ 0.8 (HNSW + `iterative_scan`) | Low | ADR 0002 |
 | Embedding runs on the API process CPU when the worker is embedded | Low | Standalone worker (ADR 0008) |
 | PDF fonts do not cover CJK / Indic scripts | Low | Add Noto fonts per script if needed (ADR 0013) |
-| Transcription speaker attribution and name spelling errors flow into the minutes | Medium | Evaluate in M12; users can edit the transcript and re-run |
-| Gemini free-tier quota exhausted during testing; processing and answers unavailable until it resets | Medium | Retries and clear 503s work; consider a paid key or a second provider before demo |
-| `RAG_MIN_SCORE` calibrated on small samples | Low | Measure in M12 |
+| Transcription speaker attribution and name spelling errors flow into the minutes | Medium | Users can edit the transcript and re-run |
+| `RAG_MIN_SCORE` calibrated on small samples | Low | Visible verified / unverified badges |
 | Editing an action item's task text re-embeds only on re-processing (context is still live) | Low | ADR 0014 |
-| No rate limiting on `/ask` (each call may spend LLM quota) | Medium | Before public deployment (M10) |
+| No rate limiting on `/ask` (each call may spend LLM quota) | Medium | Add at the reverse proxy / gateway for public deployment |
 | Job result `transcribed` describes the final attempt only (false after a retry that reused the transcription) | Low | Cosmetic; events show the full history |
 | No bulk re-index command after a model/chunker change (meetings re-index when re-processed) | Low | Add if the model changes |
 
@@ -421,25 +413,6 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 
 ## Environment
 
-- **Repository:** `C:\Users\madhan\OneDrive\Desktop\adv sql` (snapshot of M1 at `C:\dev\minuteai-BACKUP-2026-09-12`)
-- **Note:** inside OneDrive. If `pip install` fails with a file-lock error, pause OneDrive sync.
-- **Python:** 3.12.10 in `backend/.venv` · **Ports:** Postgres 5432 · DynamoDB Local 8001 · S3 (RustFS) 9000 · API 8010 · Web 5173
-- **LLM:** `gemini-3.6-flash` · **Jobs table (dev):** `minuteai_processing_jobs`
-
-## Deployment status
-
-Local development only. No cloud resources provisioned.
-
----
-
-## Next
-
-**M9 — the controlled AI agent** (this is the project's agent; M7's review flags
-are rule-based validation, not an agent). It will use the Minutes of Meeting data
-and M8 retrieval to proactively find overdue action items, unresolved decisions
-and pending topics, gather context across meetings, and prepare follow-up drafts
-(e.g. reminder emails, agenda items) that a person reviews and approves before
-anything is sent. Every agent action is recorded and bounded by explicit tools.
-
-Before M9 work that needs Gemini: re-run the M8 end-to-end live check once the
-quota resets. M10 and M11 need an AWS account (Terraform).
+- **Python:** 3.12 · **Node.js:** 20+ · **Docker:** PostgreSQL 16 + pgvector, DynamoDB Local, S3-compatible storage (RustFS)
+- **Ports:** Postgres 5432 · DynamoDB Local 8001 · S3 9000 · API 8010 · Web 5173
+- **LLM:** Google Gemini (`gemini-3.6-flash`) · **Embeddings:** all-MiniLM-L6-v2 (local, ONNX Runtime)

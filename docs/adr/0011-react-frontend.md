@@ -40,7 +40,7 @@ keeps the user signed in within that tab.
   narrows the window in which a stolen token is useful.
 - **Not an httpOnly cookie (yet):** a cookie would hide the token from page
   scripts, but the API would then need CSRF defences and cookie-domain setup
-  that only make sense once the deployment topology exists (M10).
+  that depend on the deployment topology.
 - **Accepted risk:** any script injected into the page could read the token.
   Mitigations are that React escapes all rendered text, the app never uses
   `dangerouslySetInnerHTML`, transcripts and model output are rendered as plain
@@ -57,8 +57,8 @@ keeps the user signed in within that tab.
   was resolved from relative wording, the original words are shown next to it.
 - **Destructive actions are confirmed** in an accessible dialog (`alertdialog`,
   Cancel focused, Escape cancels). Everything else gives a toast.
-- **Features that don't exist yet are shown as disabled and labelled with their
-  milestone** (Ask your meetings — M7, Agent follow-ups — M8), never faked.
+- **Nothing is faked.** Every navigation entry leads to a working page backed by
+  the real API.
 - Accessible names on every icon-only control, a keyboard-reachable layout, a
   theme applied before first paint (no flash), and an off-canvas sidebar below
   860 px.

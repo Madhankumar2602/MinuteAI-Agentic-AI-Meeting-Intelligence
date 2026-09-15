@@ -39,8 +39,7 @@ changed, stored v1 results are no longer current, and re-processing fills in the
 new fields.
 
 The fields are stored as JSONB on `summaries` (migration `0006`), following the
-`key_points` precedent: small, ordered, and always read whole. The M9 agent can
-read them there.
+`key_points` precedent: small, ordered, and always read whole.
 
 ### 2. Notes are a distinct input kind
 
@@ -79,10 +78,8 @@ that raises the flags a careful minute-taker would check before sending:
 - unnamed speakers (`Speaker 2`);
 - a transcript edited since extraction.
 
-This is **not the project's AI agent** and is never described as one. It is
-predictable, testable, and free. The controlled AI agent is M9: it uses the MOM data
-and the M8 retrieval to find overdue tasks and unresolved decisions or topics, and
-drafts follow-ups that a person approves. These checks stay in place alongside it.
+This is **rule-based validation logic**, not an AI agent, and is never described
+as one. It is predictable, testable, and free.
 
 ### 5. PDF: ReportLab, embedded DejaVu fonts, content-addressed storage
 

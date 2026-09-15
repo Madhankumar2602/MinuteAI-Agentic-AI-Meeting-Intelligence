@@ -129,8 +129,8 @@ removing the cross-store consistency window described below. It was not chosen
 because:
 (a) the project's architecture deliberately separates ephemeral workflow state
 from the relational source of truth (ADR 0001);
-(b) M11's scheduled Lambda agent will record its runs in the same DynamoDB
-design, reachable without a VPC connection to the database;
+(b) serverless workers can use the same DynamoDB design without a VPC
+connection to the database;
 (c) DynamoDB TTL expires operational history without a cleanup job.
 If the polyglot requirement did not exist, `SKIP LOCKED` would be the
 recommendation.

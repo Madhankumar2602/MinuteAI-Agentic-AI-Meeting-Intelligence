@@ -44,8 +44,7 @@ token as an upload token.
 replacement upload to overwrite the current recording's row before the new
 file was verified. Keeping the row out until confirmation removes that failure
 mode and the status column with it. The trade-off is that issued-but-never-used
-uploads can leave orphaned objects, to be expired by an S3 lifecycle rule in
-M10.
+uploads can leave orphaned objects, to be expired by an S3 lifecycle rule.
 
 ## Decision 2 — Three independent validation layers
 
@@ -76,7 +75,7 @@ The architecture review assumed MinIO. At implementation time:
 
 RustFS is pinned to `1.0.0-rc.6`. Being a release candidate is acceptable
 because it runs **only in development**: the application code is plain boto3
-S3, and M10 changes `S3_ENDPOINT_URL` to real S3 with no code changes.
+S3, and pointing `S3_ENDPOINT_URL` at Amazon S3 needs no code changes.
 
 ## Decision 4 — Transcription as a stage inside the existing job
 
@@ -131,8 +130,7 @@ connection time scale with file size, and the storage-enforced policy would be
 lost.
 
 **Local faster-whisper as the transcriber.** ADR 0006 planned it as a fallback.
-**Deferred to M12**, where it becomes an evaluation baseline for WER, not a
-runtime path. It brings a large native dependency (ctranslate2, model
+**Not used at runtime**; it is better suited as an evaluation baseline for WER. It brings a large native dependency (ctranslate2, model
 downloads) with uncertain Windows wheels, and delivers no user-visible benefit
 while Gemini is available. `TranscriptionProvider` is a separate interface from
 `LLMProvider` so it can be added without touching the pipeline.
@@ -152,12 +150,11 @@ relational store; S3 keeps the raw, larger structured output.
 
 **Limitations**
 - **Speaker attribution is imperfect**, and owner linking inherits those errors.
-  Measure in M12.
 - **Name spelling varies** between runs ("Meera" / "Mira"), which can break
   owner matching against known participants.
 - **Duration** is exact for WAV only; other containers report none rather than
   trusting model timestamps.
 - **Recordings are sent to Google** for transcription (free-tier data terms
   apply; ADR 0006).
-- **Orphaned objects** from abandoned uploads need an S3 lifecycle rule (M10).
+- **Orphaned objects** from abandoned uploads need an S3 lifecycle rule.
 - The local storage server is a release candidate; production uses Amazon S3.

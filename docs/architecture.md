@@ -1,7 +1,7 @@
 # MinuteAI — Architecture
 
 > Living document. Updated as each milestone lands.
-> Current state: **M8 complete** (core MOM workflow + Ask your meetings). Sections marked *(planned)* are not built yet.
+> The core Minutes-of-Meeting workflow, semantic search, and Ask-your-meetings.
 
 ## 0. The central product workflow
 
@@ -25,11 +25,9 @@ video ─► audio track ┘                (speaker labels)   (Gemini)  (determ
 | Structured extraction | Gemini, `services/intelligence.py`, prompt `extract-v2` | M2, M7 |
 | Rule-based validation (not the AI agent) | `services/intelligence.py` normalisation, `services/grounding.py`, MOM review flags | M2, M7 |
 | Ask your meetings (RAG, advanced layer) | `services/rag.py`, `POST /api/v1/ask` | M8 |
-| Controlled AI agent (advanced layer) | planned: uses MOM data + RAG; overdue tasks, unresolved decisions/topics, follow-up drafts with human approval | M9 |
 | MOM data model | `services/mom/builder.py` → `schemas/mom.py` | M7 |
 | PDF + storage + download | `services/mom/pdf.py`, `services/mom/documents.py`, `GET/POST /meetings/{id}/mom…` | M7 |
 | Search index (advanced layer) | `services/embeddings/` | M6 |
-| RAG, agent automation (advanced layers) | planned | M8, M9 |
 
 ## 1. System overview
 
@@ -60,13 +58,12 @@ video ─► audio track ┘                (speaker labels)   (Gemini)  (determ
 │ users, meetings,      │  │   job items  (TTL 30 days)   │  └──────────────┘
 │ transcripts,          │  │   meeting lock items         │
 │ summaries, decisions, │  │   gsi_meeting · gsi_status   │  ┌──────────────┐
-│ action_items,         │  │ (+ agent runs — planned M8)  │  │ S3 (RustFS   │
+│ action_items,         │  │                              │  │ S3 (RustFS   │
 │ meeting_participants, │  └──────────────────────────────┘  │ locally)     │
 │ meeting_media         │                                    │ recordings,  │
 │ meeting_chunks + HNSW │   browser ──presigned POST────────►│ raw          │
 └───────────────────────┘                                    │ transcripts  │
                                                              └──────────────┘
-         EventBridge → Lambda → Agent   (planned, M11)
 ```
 
 ## 2. Component responsibilities
@@ -334,8 +331,6 @@ round-trip cleanly), original wording kept beside resolved values (`owner_name`,
 
 | `meeting_chunks` (M6, M8) | meeting_id (CASCADE), source_kind, source_ref, chunk_index, content, char_start/char_end (transcript only), token_count, transcript_sha256, embedding_model, chunker_version, embedding `vector(384)` | UNIQUE (meeting_id, source_kind, chunk_index); HNSW `vector_cosine_ops`; CHECK on source_kind |
 
-**Planned:** `agent_alerts`,
-`agent_followups` (M8); `meeting_shares` (ADR 0004).
 
 ## 8. Authentication and authorization
 
@@ -416,7 +411,7 @@ and validated at start-up.
 | Embeddings | `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION` (pinned commit), `EMBEDDING_BATCH_SIZE` |
 | LLM | `GEMINI_API_KEY`, `GEMINI_MODEL`, `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `TRANSCRIPT_MAX_CHARS` |
 | Jobs | `DYNAMODB_JOBS_TABLE`, `DYNAMODB_AUTO_CREATE_TABLES` (false in AWS) |
-| Storage mode | `STORAGE_BACKEND` = `local` (default; local endpoints only, `~/.aws` never read, fails fast) or `aws` (M10, not enabled yet) — ADR 0010 |
+| Storage mode | `STORAGE_BACKEND` = `local` (default; local endpoints only, `~/.aws` never read, fails fast) or `aws` (deployment, guarded) — ADR 0010 |
 | Storage | `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_PUBLIC_ENDPOINT_URL`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_AUTO_CREATE_BUCKET`, `MEDIA_MAX_BYTES`, `MEDIA_UPLOAD_URL_TTL_SECONDS`, `GEMINI_TRANSCRIPTION_MODEL` |
 | Worker | `WORKER_EMBEDDED`, `WORKER_CONCURRENCY`, `WORKER_POLL_SECONDS`, `JOB_LEASE_SECONDS`, `JOB_MAX_ATTEMPTS`, `JOB_RETRY_BASE_SECONDS`, `JOB_TTL_DAYS` |
 

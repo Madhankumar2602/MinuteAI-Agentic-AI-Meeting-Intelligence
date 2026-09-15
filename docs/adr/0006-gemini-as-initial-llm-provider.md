@@ -24,7 +24,7 @@ What the pipeline needs from the provider:
 ## Decision
 
 Use the **Google Gemini API** through Google's official `google-genai` Python
-SDK, behind the provider-neutral `LLMService` interface planned for M2.
+SDK, behind a provider-neutral LLM interface.
 
 - The model name is **configuration** (`GEMINI_MODEL`), not code. It is checked
   against the models the API key can actually use when M2 starts, instead of
@@ -73,10 +73,10 @@ on hour-long transcripts is slow. Rejected for the MVP.
 **Limitations and risks**
 - **Transcription is not Whisper.** Gemini returns text from audio, but its
   timestamps and speaker turns are less reliable than a dedicated ASR model.
-  M4 keeps local `faster-whisper` as a fallback behind the same interface, and
-  M12 compares the two with word error rate.
-- **Free-tier rate limits** cap requests per minute and per day. Mitigations
-  planned for M2: cache extraction results by transcript hash plus prompt
+  The provider sits behind the same interface, so a dedicated ASR model can be
+  swapped in and compared by word error rate.
+- **Free-tier rate limits** cap requests per minute and per day. Mitigations:
+  cache extraction results by transcript hash plus prompt
   version, back off on HTTP 429, and never re-process unchanged transcripts.
 - **Data handling.** Google's terms treat free-tier and paid-tier API content
   differently, and free-tier content may be used to improve Google's products.

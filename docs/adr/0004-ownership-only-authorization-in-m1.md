@@ -58,8 +58,8 @@ the caller, but a clear signal in the logs if someone is probing.
 cannot be meaningfully tested, and untested authorization code is worse than
 absent authorization code because it invites false confidence.
 
-**Check ownership inline in each route.** Rejected: five routes today, perhaps
-twenty by M9. Each inline check is an independent opportunity to forget one,
+**Check ownership inline in each route.** Rejected: five routes at first, and
+many more as features grow. Each inline check is an independent opportunity to forget one,
 and a reviewer would have to read every route to verify the guarantee holds.
 
 **Per-route FastAPI dependency.** Attractive, but the function needs the

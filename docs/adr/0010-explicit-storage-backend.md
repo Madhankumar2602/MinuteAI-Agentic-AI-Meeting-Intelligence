@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-14
-- **Milestone:** Between M4 and M5 (safety fix before M10)
+- **Milestone:** Between M4 and M5 (safety design)
 
 ## Context
 
@@ -42,12 +42,12 @@ A fifth, structural check: a test fails if any module other than
 Allowed local hosts: `localhost`, loopback addresses, `host.docker.internal`,
 and single-label names (Docker Compose services such as `object-storage`).
 
-### `STORAGE_BACKEND=aws` (deployment, M10)
+### `STORAGE_BACKEND=aws` (deployment)
 
 Designed here: real S3 and DynamoDB, with credentials from the normal chain (an
-IAM role on AWS compute), and endpoints empty or omitted. **Not enabled yet:**
-selecting it fails at start-up with *"reserved for deployment (M10)"*. M10
-enables it deliberately, alongside Terraform-managed infrastructure.
+IAM role on AWS compute), and endpoints empty or omitted. It is
+guarded: selecting it is an explicit, deliberate configuration change made
+alongside Terraform-managed infrastructure.
 
 `local` is the default, so a missing variable is safe rather than dangerous.
 
@@ -88,7 +88,7 @@ policies, ranged reads), which the M4 tests depend on.
 **Advantages**
 - A misconfiguration fails loudly at start-up instead of reaching AWS.
 - Local development is safe on a machine that also holds real AWS credentials.
-- The switch to AWS in M10 is one explicit, reviewable change.
+- The switch to AWS is one explicit, reviewable change.
 
 **Limitations**
 - Relies on botocore's `session_var_map` to ignore `AWS_PROFILE`. That is an

@@ -123,13 +123,13 @@ describe("dashboard", () => {
     expect(await screen.findByRole("link", { name: /Create your first meeting/ })).toHaveAttribute("href", "/meetings/new");
   });
 
-  it("does not offer unbuilt features as working pages", async () => {
+  it("links every section from the sidebar", async () => {
     mockApi({ "GET /api/v1/auth/me": USER, "GET /api/v1/dashboard": DASHBOARD });
     renderApp("/");
-    const upcoming = await screen.findByText("Agent follow-ups");
-    expect(upcoming.closest("[aria-disabled]")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.queryByRole("link", { name: /Agent follow-ups/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Ask your meetings/ })).toHaveAttribute("href", "/ask");
+    const nav = await screen.findByRole("navigation", { name: "Main" });
+    for (const [name, href] of [["Dashboard", "/"], ["Meetings", "/meetings"], ["Action items", "/action-items"], ["Search", "/search"], ["Ask your meetings", "/ask"]] as const) {
+      expect(within(nav).getByRole("link", { name: new RegExp(`^${name}`) })).toHaveAttribute("href", href);
+    }
   });
 
   it("marks an action item done with one click and confirms with a toast", async () => {

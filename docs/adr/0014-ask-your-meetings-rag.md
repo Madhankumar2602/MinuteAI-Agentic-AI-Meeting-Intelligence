@@ -132,14 +132,6 @@ Response statuses are `answered`, `insufficient_context`, and
   is read live; only retrieval uses the older wording.
 - `RAG_MIN_SCORE` is calibrated on small live samples. Too high refuses answerable
   questions; too low only costs an LLM call, since the model and citation checks
-  still guard the answer. M12 measures it.
+  still guard the answer.
 - Questions are not stored. Adding history would need retention and deletion
   rules.
-
-## The agent is not part of this
-
-M7's review flags are **rule-based validation logic**, and this RAG endpoint is a
-question-answering tool. Neither is the project's AI agent. The controlled agent
-(M9) will use this retrieval and the MOM data to find overdue tasks and unresolved
-decisions or topics, and to draft follow-ups that a person approves before
-anything is sent.

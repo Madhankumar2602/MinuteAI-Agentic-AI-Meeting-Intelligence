@@ -9,7 +9,6 @@ import {
   Plus,
   Search,
   Sparkles,
-  Workflow,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router";
@@ -94,14 +93,6 @@ export function Layout() {
           <NavLink to="/ask" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             <MessageSquareText size={18} /> Ask your meetings
           </NavLink>
-
-          <div className="nav-section-label">Coming next</div>
-          {/* Visible but not clickable: this arrives in a later milestone. It is
-              labelled rather than shipped as an empty page, so nothing in the
-              UI pretends to work before it does. */}
-          <span className="nav-item disabled" aria-disabled="true" title="Available in milestone M9">
-            <Workflow size={18} /> Agent follow-ups <span className="nav-soon">M9</span>
-          </span>
         </nav>
 
         <div className="sidebar-footer">

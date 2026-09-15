@@ -1,38 +1,148 @@
-# MinuteAI
+# MinuteAI — AI Meeting Intelligence
 
-**Cloud-Based AI Meeting Intelligence and Productivity System using Polyglot
-Persistence with Retrieval-Augmented Generation and Agentic Automation**
+**Cloud-based AI meeting intelligence and productivity system using polyglot
+persistence, retrieval-augmented generation, and agentic AI.**
 
-Give it meeting notes, a transcript, an audio recording, or a video. MinuteAI
-produces **structured Minutes of Meeting**: executive summary, discussion points,
-keywords, speaker contributions, decisions, action items with owners and
-deadlines, pending items, next steps, and a source reference. You get them as a
-**professional PDF** to view or download. Semantic search, cross-meeting Q&A,
-and proactive follow-ups build on top.
-
-> **Status: M8 — Ask your meetings ✅ complete** on top of the core workflow (notes / transcript / audio / video → structured Minutes of Meeting → PDF). 297 backend tests (+6 opt-in live) and 62 frontend tests passing.
-> See [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
+MinuteAI turns any meeting into **structured Minutes of Meeting (MOM)** and a
+**professional PDF**. Give it meeting notes, a transcript, an audio recording, or
+a video. It transcribes when needed, extracts what matters with Gemini, validates
+the result, and lets you search and ask questions across all your meetings, with
+every answer traced back to its source.
 
 ---
 
-## Architecture at a glance
+## The core idea
 
-| Concern | Technology | Why |
-|---|---|---|
-| API | FastAPI, Python 3.12 | Async, typed, self-documenting |
-| Relational store | PostgreSQL 16 | Source of truth for all business data |
-| Vector search | pgvector (inside PostgreSQL) | Keeps ACL filtering and vectors in one transactional store — [ADR 0002](docs/adr/0002-pgvector-over-dedicated-vector-db.md) |
-| Ask your meetings | RAG over transcripts + minutes in pgvector, Gemini with verified citations | Answers only from your meetings, or says it cannot — [ADR 0014](docs/adr/0014-ask-your-meetings-rag.md) |
-| Minutes PDF | ReportLab, stored in S3 | One minutes model for API, web, and PDF — [ADR 0013](docs/adr/0013-minutes-of-meeting-and-pdf.md) |
-| Video → audio | PyAV (bundled FFmpeg) | Only speech is sent for transcription |
-| Embeddings | all-MiniLM-L6-v2, run locally with ONNX Runtime | No PyTorch, no external API, identical vectors — [ADR 0012](docs/adr/0012-local-embeddings-and-semantic-search.md) |
-| Workflow state | DynamoDB | Processing-job queue with leases, retries, and TTL — [ADR 0008](docs/adr/0008-dynamodb-job-queue-with-leased-workers.md) |
-| Object storage | Amazon S3 (RustFS locally) | Recordings and raw transcripts; direct browser upload — [ADR 0009](docs/adr/0009-recording-upload-and-transcription.md) |
-| LLM + transcription | Google Gemini *(M2)* | One provider behind a swappable interface — [ADR 0006](docs/adr/0006-gemini-as-initial-llm-provider.md) |
-| Auth | JWT + Argon2id | [ADR 0005](docs/adr/0005-argon2-over-bcrypt.md) |
-| Web app | React 19 + TypeScript + Vite, TanStack Query, API types generated from OpenAPI | [ADR 0011](docs/adr/0011-react-frontend.md) |
+```
+ Meeting notes / description ─┐
+ Transcript ──────────────────┤
+ Audio ───────────────────────┼──► Input processing
+ Video ──► audio extraction ──┘            │
+                                           ▼
+                          Transcription with speaker labels
+                                           ▼
+                          Gemini structured extraction
+                                           ▼
+                          Rule-based validation (evidence, owners, deadlines)
+                                           ▼
+                          Structured Minutes of Meeting
+                 ┌─────────────────────────┼─────────────────────────┐
+                 ▼                         ▼                         ▼
+           Summary · keywords      Speakers · decisions      Action items · owner
+           · discussion points     · pending items           · deadline · next steps
+                                           ▼
+                          Professional PDF ──► stored in S3 ──► view / download
+                                           ▼
+                 Embeddings (pgvector) ──► Semantic search ──► Ask your meetings (RAG)
+```
 
-Full detail: [docs/architecture.md](docs/architecture.md).
+### What the minutes contain
+
+Meeting title · agenda / description · date and time · participants · speaker-wise
+contributions · executive summary · key discussion points · keywords / topics ·
+decisions · action items with **owner** and **deadline** · pending / unresolved
+items · next steps · source and transcript reference with verified evidence quotes.
+
+---
+
+## Features
+
+| | |
+|---|---|
+| **Four input types** | Meeting notes, transcripts, audio (MP3, WAV, M4A, OGG, FLAC, WebM), video (MP4, MOV, WebM). Uploads go straight from the browser to storage through presigned POST policies, with file-signature validation |
+| **Video → audio** | The audio track is extracted locally (PyAV, 16 kHz mono Opus), so only speech is sent for transcription |
+| **Transcription** | Gemini transcription with speaker names, exact durations, raw output archived to S3 |
+| **Structured extraction** | One schema-constrained Gemini call produces the full MOM; deterministic post-processing resolves deadlines, links owners to participants, and **verifies every evidence quote against the transcript** |
+| **Validation** | Rule-based review flags: tasks without owner or deadline, unverifiable evidence, unnamed speakers, edited transcripts |
+| **Minutes of Meeting** | One data model feeds the API, the web view, and the PDF, and reflects user corrections immediately |
+| **PDF** | A4 minutes with numbered sections, action-item table, evidence appendix, page numbers, embedded Unicode fonts; stored in S3, regenerated only when the minutes change |
+| **Background processing** | DynamoDB job queue with leases, heartbeats, fencing, retries with back-off, and crash recovery |
+| **Semantic search** | Transcript passages embedded locally (all-MiniLM-L6-v2 via ONNX Runtime) in PostgreSQL + pgvector, with ownership enforced inside the vector query |
+| **Ask your meetings** | Retrieval-augmented answers over transcripts **and** minutes; answers cite numbered sources, citations are verified in code, and questions the meetings cannot answer get "not found" instead of a guess |
+| **Web app** | React + TypeScript: dashboard, meetings, live processing progress, minutes view, PDF preview, action items by urgency, search (Ctrl K), Ask, light and dark themes, responsive layout |
+| **Security** | Argon2id passwords, JWT, per-user authorization (404 for other users' data), prompt-injection fencing, secret redaction in logs, storage-backend guard that stops local development from ever reaching real AWS |
+
+---
+
+## Architecture
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│  React SPA (Vite · TypeScript · TanStack Query)                           │
+└──────────────┬────────────────────────────────────────────────────────────┘
+               │ HTTPS + JWT                     presigned POST (uploads)
+┌──────────────▼──────────────────────────────┐        │
+│  FastAPI                                     │        │
+│  api/v1 · services · embedded job worker     │        │
+└──┬───────────────┬───────────────┬───────────┘        │
+   │               │               │                    │
+┌──▼────────────┐ ┌▼─────────────┐ ┌▼────────────────┐ ┌─▼──────────────────┐
+│ PostgreSQL 16 │ │ DynamoDB     │ │ Google Gemini   │ │ Amazon S3          │
+│ + pgvector    │ │ job queue,   │ │ transcription,  │ │ recordings, raw    │
+│ source of     │ │ leases, TTL  │ │ extraction,     │ │ transcripts,       │
+│ truth + HNSW  │ │              │ │ grounded answers│ │ minutes PDFs       │
+└───────────────┘ └──────────────┘ └─────────────────┘ └────────────────────┘
+```
+
+**Polyglot persistence:** each store does one job. PostgreSQL holds business data
+and vectors, so access control and similarity search share one transactional
+query. DynamoDB holds ephemeral workflow state. S3 holds large files.
+
+| Concern | Technology |
+|---|---|
+| API | FastAPI, Python 3.12, async SQLAlchemy 2.0, Alembic, Pydantic |
+| Data | PostgreSQL 16 + pgvector (HNSW), DynamoDB, Amazon S3 (RustFS locally) |
+| AI | Google Gemini (`google-genai`), sentence-transformers all-MiniLM-L6-v2 via ONNX Runtime |
+| Media / documents | PyAV (FFmpeg), ReportLab |
+| Web | React 19, TypeScript, Vite, TanStack Query, react-router |
+| Quality | pytest (real PostgreSQL, DynamoDB Local, S3), Vitest + Testing Library, ruff, oxlint |
+| Infrastructure | Docker Compose |
+
+Design details: [docs/architecture.md](docs/architecture.md) · decisions and trade-offs: [docs/adr](docs/adr).
+
+---
+
+## Project structure
+
+```
+.
+├─ docker-compose.yml          PostgreSQL + pgvector, DynamoDB Local, S3-compatible storage
+├─ .env.example                single configuration file for Compose and the backend
+├─ backend/
+│  ├─ app/
+│  │  ├─ main.py               application factory, lifespan, embedded worker
+│  │  ├─ api/v1/               auth · meetings · intelligence · media · jobs · mom · search · ask · dashboard
+│  │  ├─ core/                 config, security, logging, middleware, AWS client guard
+│  │  ├─ db/                   models and Alembic migrations
+│  │  ├─ schemas/              request/response and LLM contracts
+│  │  ├─ services/
+│  │  │  ├─ llm/               provider interface + Gemini implementation
+│  │  │  ├─ intelligence.py    extraction pipeline and normalisation
+│  │  │  ├─ grounding.py       evidence verification
+│  │  │  ├─ transcription.py   recording → transcript
+│  │  │  ├─ audio.py           audio extraction from video
+│  │  │  ├─ mom/               minutes builder, review flags, PDF renderer, PDF storage
+│  │  │  ├─ embeddings/        chunking, local model, indexing, vector search
+│  │  │  ├─ rag.py             Ask your meetings
+│  │  │  ├─ job_store.py       DynamoDB job queue
+│  │  │  └─ storage.py         S3 access and presigned URLs
+│  │  ├─ workers/              background processing worker
+│  │  └─ evaluation/           offline retrieval evaluation
+│  └─ tests/                   unit, integration, and opt-in live tests
+├─ frontend/
+│  └─ src/
+│     ├─ api/                  typed client (types generated from OpenAPI), uploads
+│     ├─ auth/                 session and auth context
+│     ├─ components/           design system, minutes view, PDF preview, processing stepper
+│     ├─ lib/                  pure helpers (formatting, citations, grouping, theme)
+│     └─ pages/                dashboard, meetings, meeting detail, action items, search, ask
+├─ docs/
+│  ├─ architecture.md
+│  ├─ PROJECT_STATUS.md
+│  └─ adr/                     architecture decision records
+├─ infra/                      container init scripts
+└─ scripts/                    sample-audio generation
+```
 
 ---
 
@@ -40,7 +150,7 @@ Full detail: [docs/architecture.md](docs/architecture.md).
 
 | Requirement | Notes |
 |---|---|
-| **Python 3.12** | Not 3.13/3.14 — the M4/M6 ML stack lacks wheels for those. `winget install --id Python.Python.3.12 --exact` |
+| **Python 3.12** | Not 3.13/3.14 — some media and ML dependencies lack wheels for those. `winget install --id Python.Python.3.12 --exact` |
 | **Docker Desktop** | Must be running before `docker compose up` |
 | **Node.js 20+** | For the web app (tested with npm 11) |
 | **Git** | |
@@ -57,7 +167,7 @@ Ports **5432**, **8001**, **8010**, **9000**, and **5173** must be free.
 ### 1. Clone and configure
 
 ```bash
-git clone <your-repo-url> C:\dev\minuteai
+git clone https://github.com/Madhankumar2602/MinuteAI-Agentic-AI-Meeting-Intelligence.git minuteai
 ```
 
 Create your `.env` from the template:
@@ -166,8 +276,7 @@ Run the test suite (from `backend/`):
 pytest
 ```
 
-Expected: `297 passed, 6 skipped`. The first run downloads the embedding model (~90 MB) for `test_embedding_model.py`; later runs use the cache. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The two skipped tests call the real Gemini
-API and are opt-in:
+All tests should pass; tests marked `live` are skipped unless enabled. The first run downloads the embedding model (~90 MB) for `test_embedding_model.py`; later runs use the cache. (Docker must be running: tests use the real local Postgres, DynamoDB, and S3 containers.) The `live` tests call the real Gemini API and are opt-in:
 
 ```bash
 RUN_LIVE_LLM_TESTS=1 pytest -m live
@@ -332,48 +441,6 @@ every log line for that request.
 
 ---
 
-## Project layout
-
-```
-minuteai/
-├─ docker-compose.yml        Postgres+pgvector, DynamoDB Local
-├─ .env / .env.example       single config source for compose AND the backend
-├─ docs/
-│  ├─ architecture.md
-│  ├─ PROJECT_STATUS.md
-│  └─ adr/                   architecture decision records
-├─ infra/postgres/init/      container init scripts
-└─ backend/
-   ├─ pyproject.toml         dependencies + ruff/pytest config
-   ├─ requirements.lock.txt  exact versions known to work
-   ├─ alembic.ini
-   ├─ app/
-   │  ├─ main.py             application factory
-   │  ├─ core/               config, logging, middleware, security, deps, exceptions
-   │  ├─ db/                 models, session, migrations
-   │  ├─ schemas/            Pydantic request/response models
-   │  ├─ api/v1/             routes
-   │  ├─ services/           authorization, intelligence, grounding, prompts,
-   │  │                      job_store, dynamo, storage, transcription,
-   │  │                      llm/ (provider contract + Gemini),
-   │  │                      embeddings/ (chunking, ONNX model, indexing, search)
-   │  ├─ evaluation/         offline quality checks (retrieval smoke test)
-   │  └─ workers/            background processing worker
-   └─ tests/
-└─ frontend/
-   ├─ package.json           scripts: dev, build, test, lint, typecheck, gen:api
-   ├─ scripts/gen-api.mjs    OpenAPI → src/api/schema.d.ts
-   └─ src/
-      ├─ api/                typed client, upload with progress, generated schema
-      ├─ auth/               session token + auth context
-      ├─ components/         design-system primitives, stepper, dialogs, rows
-      ├─ lib/                formatting, grouping, theme (pure, unit-tested)
-      ├─ pages/              routes
-      └─ styles.css          design tokens, light/dark themes
-```
-
----
-
 ## Common problems
 
 | Symptom | Cause | Fix |
@@ -393,26 +460,9 @@ minuteai/
 | `/process` returns 409 `processing_in_progress` on transcript edit | A job is queued or running | Wait for the job to finish |
 | Web app says "Cannot reach the MinuteAI server" | API not running on 8010 | Start uvicorn (step 5) |
 | Job retries with `embedding_unavailable` | The embedding model could not be downloaded (offline, proxy) | Restore network access once; afterwards the cached model works offline |
-| Search returns nothing for a meeting | The meeting has not been processed since M6, or its transcript changed | Process it again (no second LLM call if results are current) |
+| Search returns nothing for a meeting | The meeting has not been processed yet, or its transcript changed | Process it again (no second LLM call if results are current) |
 | `/ask` returns 503 `llm_rate_limited` | Gemini quota exhausted | Wait for the quota to reset; unrelated questions still get an immediate "not found" |
-| Ask says "not found" for a processed meeting | Minutes not indexed yet (meeting processed before M8) or the transcript changed | Process the meeting again (no extra LLM call if results are current) |
+| Ask says "not found" for a processed meeting | Minutes not indexed yet or the transcript changed | Process the meeting again (no extra LLM call if results are current) |
 | Job fails with `no_audio_track` | The uploaded video has no sound | Upload a recording with audio, or add notes / a transcript |
 | `/mom` returns 409 `minutes_not_ready` | The meeting has not been processed | Add content and process it |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
-
----
-
-## Milestones
-
-- **M1** ✅ Foundation — Docker, Postgres+pgvector, DynamoDB Local, FastAPI, auth, meeting CRUD
-- **M2** ✅ Meeting intelligence — Gemini extraction of summary, decisions, action items, with evidence verification
-- **M3** ✅ Async processing — DynamoDB job queue, leased workers, retries, crash recovery
-- **M4** ✅ Recordings — direct S3 upload, signature validation, Gemini transcription
-- **M5** ✅ React UI — dashboard, meetings, live processing, action items, dark mode
-- **M6** ✅ Semantic search — local embeddings, pgvector HNSW, Search page
-- **M7** ✅ **Core workflow** — notes / transcript / audio / video → structured Minutes of Meeting → PDF
-- **M8** ✅ Ask your meetings — RAG over transcripts and minutes with verified citations
-- M9 Controlled AI agent — overdue tasks, unresolved decisions, follow-up drafts with human approval
-- M10 AWS deployment
-- M11 Lambda + EventBridge scheduling
-- M12 Evaluation + writeup

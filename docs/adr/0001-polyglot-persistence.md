@@ -29,7 +29,7 @@ Use three stores, each chosen for one job:
 | Store | Holds | Chosen because |
 |---|---|---|
 | **PostgreSQL 16** | users, meetings, participants, transcripts, summaries, decisions, action items, meeting chunks + embeddings | Relational integrity, foreign keys, joins, transactions; and via pgvector it also serves similarity search (see ADR 0002) |
-| **DynamoDB** | processing jobs, step events, agent runs | Schema-flexible for a pipeline whose stages are still changing; native TTL expires operational data automatically; reachable from Lambda (M11) without VPC attachment |
+| **DynamoDB** | processing jobs, step events | Schema-flexible for a pipeline whose stages evolve; native TTL expires operational data automatically; reachable from serverless compute without VPC attachment |
 | **Amazon S3** | audio, video, raw transcript files, generated exports | Purpose-built for large objects; presigned URLs let uploads bypass the API process entirely |
 
 PostgreSQL is the **source of truth**. The other two hold data that is either
@@ -50,8 +50,8 @@ on joining chunks to meetings to permissions. Losing foreign keys to gain
 schema flexibility in one subsystem is a bad trade.
 
 **PostgreSQL + S3 only, jobs in a Postgres table.** A legitimate simplification,
-and the fallback if DynamoDB proves troublesome. Rejected primarily because the
-M11 scheduled Lambda would then need database access inside a VPC — the single
+and the fallback if DynamoDB proves troublesome. Rejected primarily because any
+serverless worker would then need database access inside a VPC — the single
 most common deployment failure in projects of this shape.
 
 ## Consequences
@@ -59,7 +59,7 @@ most common deployment failure in projects of this shape.
 **Advantages**
 - Each store is used for what it is good at, and each choice has a concrete
   technical reason rather than a résumé-driven one.
-- The Lambda agent in M11 needs no VPC configuration.
+- Serverless workers need no VPC configuration to reach workflow state.
 - Media never travels through the API process.
 
 **Limitations**

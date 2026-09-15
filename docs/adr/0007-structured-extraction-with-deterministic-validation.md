@@ -66,8 +66,8 @@ The result is stored as `evidence_verified`.
 
 An unverified item is **kept and flagged**, not deleted. Deleting would turn
 every loosely-quoted but real task into a silent miss, which for a productivity
-tool is worse than a visible "unverified" marker. The verified rate becomes a
-measurable grounding metric in M12.
+tool is worse than a visible "unverified" marker. The verified rate is a
+measurable grounding metric.
 
 ### 4. Owner linking without guessing
 
@@ -103,8 +103,8 @@ database unchecked.
 
 **A second LLM call to verify the first ("LLM-as-judge").** Doubles cost and
 latency, and moves the trust problem rather than solving it. String-level
-evidence checking is free, deterministic, and explainable. An LLM judge remains
-a candidate for M12 *evaluation*, not for the production path.
+evidence checking is free, deterministic, and explainable. An LLM judge is a
+candidate for offline *evaluation*, not for the production path.
 
 **Reject unverified items.** Rejected for the false-negative reason above.
 

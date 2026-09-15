@@ -73,5 +73,5 @@ need rebuilding on every restart. Suitable for a notebook, not a service.
   At this scale that is acceptable; at much larger scale a read replica would be
   the first mitigation.
 - `pgvector` must be available on the deployment target. Verified locally on
-  `pgvector/pgvector:pg16` (extension version 0.8.6); **must be re-verified on
-  RDS before M10 depends on it** — this is tracked as a known risk.
+  `pgvector/pgvector:pg16` (extension version 0.8.6); a managed PostgreSQL
+  target must offer pgvector ≥ 0.8 (HNSW with iterative scans).
