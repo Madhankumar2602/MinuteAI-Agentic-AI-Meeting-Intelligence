@@ -39,25 +39,6 @@ deadline, pending/unresolved items, next steps, and a source/transcript referenc
 Semantic search and Ask-your-meetings (RAG) are advanced layers **on top of** this core;
 they never displace it.
 
-### Gap analysis of M1–M6 against the core workflow (2026-09-14)
-
-| Requirement | State before M7 | Action |
-|---|---|---|
-| Transcript input | ✅ M2 | keep |
-| Audio input | ✅ M4 (upload, validation, Gemini transcription with speaker labels) | keep |
-| Video input | ⚠️ accepted, but the whole video file was sent to Gemini | extract the audio track locally first (smaller upload, no visual data leaves) |
-| Meeting notes / description as input | ⚠️ only by pasting notes as a "transcript"; the model was told it was verbatim speech | add an explicit *notes* input kind; the prompt adapts |
-| Description / agenda used by the AI | ❌ not sent to the model | include as agenda context |
-| Speakers | ⚠️ labels kept in transcript lines; participants listed | add speaker-wise contributions (model) + turn/word counts (computed) |
-| Executive summary, key points, decisions, action items, owner, deadline | ✅ M2 | keep |
-| Keywords/topics | ❌ | add to extraction |
-| Pending / unresolved items | ❌ | add to extraction, evidence-verified |
-| Next steps | ⚠️ UI showed open action items only | add to extraction |
-| Source reference | ⚠️ evidence quotes exist; not assembled into a document | MOM "source" section: input kind, model, prompt version, transcript hash, evidence status |
-| Structured MOM data model | ❌ | one `MinutesOfMeeting` model, shared by API, web view, and PDF |
-| PDF generation, storage, view/download | ❌ | ReportLab PDF, stored in S3, presigned view/download links |
-| Nothing already built needs rewriting | — | job queue, storage safety, embeddings, and UI are reused unchanged |
-
 ## Milestone progress
 
 | # | Milestone | Status |
@@ -360,33 +341,6 @@ tests/live/test_gemini_live.py   2  real API (opt-in)
 | Embedded worker, 3 simultaneous jobs | Max 2 concurrent extractions; all completed in 13–30 s |
 | Re-submit unchanged meeting | `200 cached=true` in 15 ms |
 | `/health/deps` | postgres, dynamodb (jobs table ACTIVE), gemini, worker all healthy |
-
----
-
-## Known issues / limitations
-
-| Item | Severity | Plan |
-|---|---|---|
-| Job outcome (DynamoDB) and meeting status (PostgreSQL) are not one transaction — a crash between them can leave them disagreeing | Low | Job is authoritative; resubmission corrects it. Documented in ADR 0008 |
-| LLM calls are at-least-once: a crash mid-call spends quota again on recovery | Low | Results replaced idempotently |
-| Standalone worker may start a job up to 2 s late (polling) | Low | Embedded worker is woken instantly |
-| Graceful shutdown drains for only 10 s; longer jobs are recovered after lease expiry | Low | By design |
-| Graceful shutdown drain not exercised live (Windows cannot send Ctrl+C to a background process); covered by the `run_forever` stop test | Low | Covered by the `run_forever` stop test |
-| Re-processing resets manual status changes on action items | Low | ADR 0007; `force=true` required |
-| Evidence verification proves a quote exists, not that it supports the claim | Low | Visible verified / unverified badges |
-| No rate limiting on `/auth/login` or `/process` | Medium | Add at the reverse proxy / gateway for public deployment |
-| JWT readable by page scripts (sessionStorage) | Medium | Trade-off documented in ADR 0011 |
-| Frontend polls every 2 s while a job is active | Low | Adequate for now; SSE only if needed |
-| Free-tier Gemini content may be used by Google | Medium | Synthetic/consented transcripts only |
-| Managed PostgreSQL must provide pgvector ≥ 0.8 (HNSW + `iterative_scan`) | Low | ADR 0002 |
-| Embedding runs on the API process CPU when the worker is embedded | Low | Standalone worker (ADR 0008) |
-| PDF fonts do not cover CJK / Indic scripts | Low | Add Noto fonts per script if needed (ADR 0013) |
-| Transcription speaker attribution and name spelling errors flow into the minutes | Medium | Users can edit the transcript and re-run |
-| `RAG_MIN_SCORE` calibrated on small samples | Low | Visible verified / unverified badges |
-| Editing an action item's task text re-embeds only on re-processing (context is still live) | Low | ADR 0014 |
-| No rate limiting on `/ask` (each call may spend LLM quota) | Medium | Add at the reverse proxy / gateway for public deployment |
-| Job result `transcribed` describes the final attempt only (false after a retry that reused the transcription) | Low | Cosmetic; events show the full history |
-| No bulk re-index command after a model/chunker change (meetings re-index when re-processed) | Low | Add if the model changes |
 
 ---
 

@@ -1,6 +1,6 @@
 """Central authorization for meeting-scoped resources.
 
-Every route that touches a meeting - now, and in M2 through M9 - goes through
+Every route that touches a meeting goes through
 ``authorize_meeting_access``. Concentrating the rule in one function is what
 makes it auditable: there is exactly one place to read to know who can see
 what, and exactly one place to change when sharing arrives.

@@ -12,7 +12,7 @@ engine = create_async_engine(
     settings.database_url,
     echo=False,
     # Validates a pooled connection before handing it out. Without it, a
-    # connection dropped by the server (container restart, RDS failover in M10)
+    # connection dropped by the server (container restart, managed-database failover)
     # surfaces as a random request failure instead of being replaced silently.
     pool_pre_ping=True,
     pool_size=5,

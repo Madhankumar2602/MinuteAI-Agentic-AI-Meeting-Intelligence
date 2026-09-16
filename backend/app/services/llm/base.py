@@ -132,8 +132,8 @@ class TranscriptionProvider(Protocol):
     """Speech-to-text contract (M4).
 
     Separate from ``LLMProvider`` because the two are genuinely independent
-    choices: the fallback planned for evaluation (local faster-whisper) is a
-    transcriber but not a language model.
+    choices: a dedicated speech-to-text model is a transcriber but not a
+    language model.
     """
 
     name: str

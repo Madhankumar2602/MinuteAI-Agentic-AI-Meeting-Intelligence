@@ -22,10 +22,10 @@ meeting recordings, to a real AWS account.
       client is somehow built with the wrong endpoint.
     Misconfiguration fails at start-up, before any request is made.
 
-``aws`` (deployment, M10)
-    Real S3 and DynamoDB through the normal credential chain / IAM role. The
-    mode is defined here so the design is complete, but it is **not enabled**
-    until M10: selecting it currently fails at start-up with a clear message.
+``aws`` (deployment)
+    Real S3 and DynamoDB through the normal credential chain / IAM role. It is
+    guarded: selecting it is a deliberate deployment change, and any attempt to
+    use it outside that configuration fails at start-up with a clear message.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ def build_client(
     """Create an S3 or DynamoDB client that honours ``STORAGE_BACKEND``."""
     if backend is StorageBackend.AWS:
         raise UnsafeAwsConfigurationError(
-            "STORAGE_BACKEND=aws is reserved for deployment (M10) and is not enabled yet."
+            "STORAGE_BACKEND=aws is guarded and cannot be selected in this configuration."
         )
 
     problem = local_endpoint_problem(endpoint_url, setting_name)

@@ -146,6 +146,109 @@ Design details: [docs/architecture.md](docs/architecture.md) · decisions and tr
 
 ---
 
+## How a meeting flows through the system
+
+1. **Sign in.** Passwords are hashed with Argon2id; the API returns a JWT that the
+   web app keeps for the tab.
+2. **Create the meeting** with a title, date and optional agenda, then give it
+   content: notes, a transcript, an audio file or a video.
+3. **Upload (audio / video).** The browser asks the API for a presigned POST, then
+   sends the file **straight to object storage**. The policy pins the key, content
+   type and maximum size, so storage itself rejects anything else. On confirmation
+   the API checks the stored object's real file signature and deletes it if the
+   bytes are not the declared format.
+4. **Queue.** Processing is queued in DynamoDB in one transaction that also takes a
+   per-meeting lock, so a meeting can never run twice at once. The API answers in
+   milliseconds with a job you can poll.
+5. **Worker.** A worker claims the job with a conditional write (exactly one winner),
+   renews a lease while it runs, and retries transient failures with back-off. If a
+   worker dies, its lease lapses and another worker recovers the job.
+6. **Audio extraction (video).** The audio track is decoded locally to 16 kHz mono
+   Opus, so only speech leaves the system and the upload to the model is far smaller.
+7. **Transcription (audio / video).** Gemini returns speaker-labelled segments; the
+   raw output is archived to S3 and the working transcript is stored in PostgreSQL.
+   A transcript you typed is never overwritten by a recording.
+8. **Search indexing.** The transcript is split into speaker-turn passages, embedded
+   locally, and stored as vectors. This runs before extraction, so a meeting is
+   searchable even if the language model is unavailable.
+9. **Extraction.** One schema-constrained Gemini call produces the whole minutes:
+   summary, key points, keywords, speakers, decisions, action items, unresolved
+   items and next steps.
+10. **Validation.** Deterministic code then does what a model should not be trusted
+    with: parsing deadlines, linking owners to participants, counting speaker turns,
+    and **checking every evidence quote against the transcript**. Anything that fails
+    is flagged, never silently accepted.
+11. **Minutes indexing.** The minutes are embedded too, so questions about decisions
+    and owners retrieve the structured answer rather than the surrounding chatter.
+12. **PDF.** The minutes are rendered to an A4 PDF and stored in S3 under a content
+    fingerprint, so an unchanged document is reused and a corrected one is rebuilt.
+13. **Use it.** Read the minutes, correct an owner or a status, download the PDF,
+    search across meetings by meaning, or ask a question and get an answer with
+    citations back to the meetings it came from.
+
+---
+
+## Data model
+
+PostgreSQL holds the source of truth. Every table below hangs off a meeting, and a
+meeting belongs to one owner, which is what makes authorization a single rule.
+
+```
+users ─1:N─ meetings ─1:1─ transcripts          text + provenance (source, media, model, duration)
+                     ├─1:1─ meeting_media       the uploaded recording
+                     ├─1:1─ summaries           summary, key points, keywords, speakers,
+                     │                          pending items, next steps + model provenance
+                     ├─1:N─ meeting_participants
+                     ├─1:N─ decisions           text, context, status, evidence + verified flag
+                     ├─1:N─ action_items        task, owner, deadline (+ original wording),
+                     │                          priority, status, evidence + verified flag
+                     └─1:N─ meeting_chunks      passages + vector(384), HNSW index
+```
+
+DynamoDB holds processing jobs, their events and per-meeting locks, with a TTL.
+S3 holds recordings, raw transcription output and the generated minutes PDFs, all
+under `users/{user}/meetings/{meeting}/`, so deleting a meeting removes its files.
+
+---
+
+## The web app
+
+| Page | What it does |
+|---|---|
+| **Dashboard** | Counts by status, action items needing attention, recent meetings; refreshes itself while anything is processing |
+| **Meetings** | Search by title, filter by status, paginate |
+| **New meeting** | Meeting notes · transcript · audio · video, with drag-and-drop upload and progress |
+| **Meeting** | Live processing steps, then the minutes: summary, keywords, decisions, action items with one-click status, pending items, next steps, speakers, evidence, and the PDF |
+| **Action items** | Everything you owe across meetings, grouped by urgency |
+| **Search** | Semantic search over transcripts (Ctrl K), opening the exact passage |
+| **Ask your meetings** | Questions answered from your meetings, with citations you can click through to the source |
+
+Light and dark themes, keyboard-reachable controls, accessible dialogs, and a
+responsive layout down to phone width.
+
+---
+
+## Security
+
+- **Passwords** hashed with Argon2id; JWT access tokens; the token is checked against
+  the database on every request, so deactivating an account takes effect at once.
+- **Authorization in one place.** Every meeting-scoped route resolves access through a
+  single rule, and answers **404 rather than 403** so the existence of another user's
+  meeting is never revealed. Vector search applies the same rule inside the SQL query.
+- **Uploads** are constrained by the presigned policy, then validated by file
+  signature; the client's filename never becomes a storage key.
+- **Prompt injection.** Transcripts, agendas and questions are fenced as untrusted
+  data, delimiter markers inside them are neutralised, and the model's output is
+  schema-constrained and never executed.
+- **Grounded answers.** Citations are verified in code: an answer that cites nothing
+  real is reported as unsupported instead of being shown.
+- **Secrets** are read from one typed configuration object, kept out of logs by a
+  redacting formatter, and never committed.
+- **Cloud guard.** Local development is pinned to local endpoints, never reads
+  `~/.aws`, and refuses any request to a non-local host.
+
+---
+
 ## Prerequisites
 
 | Requirement | Notes |
@@ -317,6 +420,60 @@ npm run gen:api
 
 ---
 
+## Testing
+
+```bash
+pytest                      # backend: unit, integration, and end-to-end tests
+```
+```bash
+npm test                    # frontend: component and page tests
+```
+
+Tests run against **real infrastructure**: a dedicated PostgreSQL database, real
+DynamoDB Local tables, and the real S3-compatible server, with only the language
+model replaced by a double. They cover concurrency (one job per meeting, one winner
+per claim), crash recovery, upload rejection, PDF contents read back from storage,
+retrieval quality, grounding, and cross-user isolation. Safeguards are
+mutation-checked: each protection is deliberately broken to confirm a test fails.
+
+Opt-in tests call the real Gemini API:
+
+```bash
+RUN_LIVE_LLM_TESTS=1 pytest -m live
+```
+
+Retrieval quality can be measured offline against the real embedding model:
+
+```bash
+python -m app.evaluation.retrieval
+```
+
+---
+
+## Design decisions
+
+Each significant choice is recorded with its alternatives and trade-offs in
+[docs/adr](docs/adr):
+
+| # | Decision |
+|---|---|
+| [0001](docs/adr/0001-polyglot-persistence.md) | Polyglot persistence: PostgreSQL + DynamoDB + S3 |
+| [0002](docs/adr/0002-pgvector-over-dedicated-vector-db.md) | pgvector instead of a dedicated vector database |
+| [0003](docs/adr/0003-async-sqlalchemy.md) | Async SQLAlchemy with asyncpg |
+| [0004](docs/adr/0004-ownership-only-authorization-in-m1.md) | One ownership rule, 404 instead of 403 |
+| [0005](docs/adr/0005-argon2-over-bcrypt.md) | Argon2id for passwords |
+| [0006](docs/adr/0006-gemini-as-initial-llm-provider.md) | Google Gemini behind a provider-neutral interface |
+| [0007](docs/adr/0007-structured-extraction-with-deterministic-validation.md) | Structured extraction with deterministic validation |
+| [0008](docs/adr/0008-dynamodb-job-queue-with-leased-workers.md) | DynamoDB job queue with leased workers |
+| [0009](docs/adr/0009-recording-upload-and-transcription.md) | Presigned uploads, signature validation, transcription |
+| [0010](docs/adr/0010-explicit-storage-backend.md) | Explicit storage backend guard |
+| [0011](docs/adr/0011-react-frontend.md) | React SPA with API types generated from OpenAPI |
+| [0012](docs/adr/0012-local-embeddings-and-semantic-search.md) | Local embeddings, turn-based chunking, filtered HNSW search |
+| [0013](docs/adr/0013-minutes-of-meeting-and-pdf.md) | One minutes model, stored PDF, audio extracted from video |
+| [0014](docs/adr/0014-ask-your-meetings-rag.md) | RAG over transcripts and minutes, grounded by code-level checks |
+
+---
+
 ## Trying it by hand
 
 The quickest path is the web app at <http://localhost:5173>. To drive the API directly, use Swagger at <http://localhost:8010/docs>:
@@ -466,3 +623,9 @@ every log line for that request.
 | Job fails with `no_audio_track` | The uploaded video has no sound | Upload a recording with audio, or add notes / a transcript |
 | `/mom` returns 409 `minutes_not_ready` | The meeting has not been processed | Add content and process it |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
+
+---
+
+## Author
+
+**Madhankumar Ramasamy** — design, implementation, and documentation.

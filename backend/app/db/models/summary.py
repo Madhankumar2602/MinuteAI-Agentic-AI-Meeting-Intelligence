@@ -44,7 +44,7 @@ class MeetingSummary(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     # --- provenance -------------------------------------------------------
     # Which model, which prompt, and which exact transcript produced this.
-    # Without these, M12's evaluation results cannot be reproduced or compared.
+    # Without these, evaluation results cannot be reproduced or compared.
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)

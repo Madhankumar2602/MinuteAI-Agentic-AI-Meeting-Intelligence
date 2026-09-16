@@ -2,7 +2,7 @@
 
 ``EXTRACTION_PROMPT_VERSION`` is stored with every summary. Any change to the
 wording below MUST bump it, which does two things: stored results record
-exactly which prompt produced them (needed to compare prompts in M12), and the
+exactly which prompt produced them (needed to compare prompts), and the
 processing cache is invalidated so meetings are not served results from an
 older prompt.
 """
@@ -112,7 +112,7 @@ def build_extraction_prompt(
 # ---------------------------------------------------------------------------
 
 # Bump on any change to the wording below. Returned with every answer so
-# evaluations (M12) can tell prompt versions apart.
+# evaluations can tell prompt versions apart.
 ASK_PROMPT_VERSION = "ask-v1"
 
 ASK_SYSTEM_INSTRUCTION = """\

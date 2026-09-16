@@ -20,8 +20,8 @@ The window matters: counting matches across the whole transcript would let a
 paraphrase "verify" by collecting common words ("the", "on", "we") from
 unrelated sentences.
 
-``evidence_verified=False`` does not delete an item. It is surfaced to the user
-and measured in M12, since a false negative (a real item with a loosely
+``evidence_verified=False`` does not delete an item. It is surfaced to the user,
+since a false negative (a real item with a loosely
 quoted excerpt) is more costly than showing an unverified flag.
 """
 

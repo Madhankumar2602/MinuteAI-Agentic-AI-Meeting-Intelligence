@@ -11,9 +11,9 @@ handlers (the latter run in a threadpool). SQLAlchemy 2.0 supports both a
 synchronous and an asynchronous API. A choice was required before the driver
 dependency could be pinned.
 
-MinuteAI's later milestones are dominated by I/O that is *not* the database:
+MinuteAI's workload is dominated by I/O that is *not* the database:
 LLM API calls (seconds), transcription (tens of seconds), embedding requests,
-and in M8 an agent loop that interleaves several tool calls with LLM calls.
+and retrieval-augmented answering that interleaves search with LLM calls.
 While any of those waits, the process should be serving other requests.
 
 ## Decision

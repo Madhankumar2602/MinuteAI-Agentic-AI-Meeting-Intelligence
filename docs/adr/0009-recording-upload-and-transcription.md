@@ -129,7 +129,7 @@ byte of every recording would pass through an API process, memory and
 connection time scale with file size, and the storage-enforced policy would be
 lost.
 
-**Local faster-whisper as the transcriber.** ADR 0006 planned it as a fallback.
+**Local faster-whisper as the transcriber.** ADR 0006 considered it as a fallback.
 **Not used at runtime**; it is better suited as an evaluation baseline for WER. It brings a large native dependency (ctranslate2, model
 downloads) with uncertain Windows wheels, and delivers no user-visible benefit
 while Gemini is available. `TranscriptionProvider` is a separate interface from

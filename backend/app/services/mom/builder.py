@@ -9,8 +9,8 @@
 The review step is the "validation & enrichment" stage of the core workflow.
 It is ordinary code, not a model: it checks what a careful minute-taker would
 check before circulating minutes (every task has an owner and a date, quoted
-evidence was found in the input, speakers are named). The controlled LLM agent
-planned for M9 can add suggestions here; it will not replace these checks.
+evidence was found in the input, speakers are named). It is rule-based
+validation, not a model, so its results are predictable and testable.
 """
 
 from __future__ import annotations

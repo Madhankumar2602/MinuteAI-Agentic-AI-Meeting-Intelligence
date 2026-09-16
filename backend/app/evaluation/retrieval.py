@@ -14,7 +14,7 @@ For every chunk size it reports:
 
 This is a smoke test, not the evaluation: 18 questions over 2 meetings is too
 small to choose between chunk sizes (with a handful of chunks, large chunks win
-by default). M12 evaluates retrieval properly on a larger labelled corpus.
+by default). A larger labelled corpus is needed to rank them.
 """
 
 from __future__ import annotations

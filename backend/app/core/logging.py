@@ -6,7 +6,7 @@ explained line by line.
 
 Two formats:
   * ``json``    - one JSON object per line. Machine-parseable, and what
-                  CloudWatch Logs Insights expects in M10.
+                  CloudWatch Logs Insights expects.
   * ``console`` - human-readable, for local development.
 
 Every record carries the current request's ``request_id`` (see

@@ -16,8 +16,8 @@ services:
   postgres:
     # Official pgvector image: PostgreSQL 16 with the vector extension already
     # compiled in. Using this instead of postgres:16 avoids having to build the
-    # extension from source, and pins us to the same PG major version as the
-    # RDS instance planned for M10.
+    # extension from source, and pins the same PostgreSQL major version as a
+    # managed deployment would use.
     image: pgvector/pgvector:pg16
     container_name: minuteai_postgres
     restart: unless-stopped
@@ -64,8 +64,8 @@ services:
 
   object-storage:
     # S3-compatible object storage for local development (ADR 0009). The app
-    # talks to it with the same boto3 S3 client it will use against real
-    # Amazon S3 in M10 - only S3_ENDPOINT_URL changes.
+    # talks to it with the same boto3 S3 client used against real Amazon S3 -
+    # only S3_ENDPOINT_URL changes.
     #
     # RustFS rather than MinIO: the minio/minio image was withdrawn from Docker
     # Hub in 2025 and the remaining mirror stopped receiving updates. RustFS was

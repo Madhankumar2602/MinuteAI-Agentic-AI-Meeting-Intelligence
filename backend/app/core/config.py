@@ -56,11 +56,11 @@ class Settings(BaseSettings):
     # ---- Storage backend (ADR 0010) ---------------------------------------
     # Which S3 and DynamoDB the app may talk to. "local" (the default, so a
     # missing value is safe) allows only local endpoints and never reads
-    # ~/.aws. "aws" is reserved for deployment in M10 and refused until then.
+    # ~/.aws. "aws" is for deployment and is guarded (ADR 0010).
     storage_backend: StorageBackend = StorageBackend.LOCAL
 
     # ---- DynamoDB ---------------------------------------------------------
-    # Empty string means "use the real AWS endpoint" (M10). Locally this points
+    # Empty string means "use the real AWS endpoint". Locally this points
     # at the DynamoDB Local container.
     dynamodb_endpoint_url: str = "http://localhost:8001"
     aws_region: str = "us-east-1"
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
 
     # Name of the processing-jobs table. Tests use a separate table.
     dynamodb_jobs_table: str = "minuteai_processing_jobs"
-    # Create the table on start-up if missing. Convenient locally; in AWS (M10)
+    # Create the table on start-up if missing. Convenient locally; in AWS
     # tables are created by infrastructure code and the app role is not granted
     # dynamodb:CreateTable, so this is turned off there.
     dynamodb_auto_create_tables: bool = True
@@ -146,7 +146,7 @@ class Settings(BaseSettings):
         """Fail at start-up, before any request, if the storage target is unsafe."""
         if self.storage_backend is StorageBackend.AWS:
             raise ValueError(
-                "STORAGE_BACKEND=aws is reserved for deployment (M10) and is not enabled yet. "
+                "STORAGE_BACKEND=aws is guarded and cannot be selected in this configuration. "
                 "Use STORAGE_BACKEND=local for development."
             )
         problems = [
