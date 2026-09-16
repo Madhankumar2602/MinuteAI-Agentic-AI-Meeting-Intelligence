@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # ---- Storage backend (ADR 0010) ---------------------------------------
     # Which S3 and DynamoDB the app may talk to. "local" (the default, so a
     # missing value is safe) allows only local endpoints and never reads
-    # ~/.aws. "aws" is for deployment and is guarded (ADR 0010).
+    # ~/.aws. "aws" is reserved for deployment configurations.
     storage_backend: StorageBackend = StorageBackend.LOCAL
 
     # ---- DynamoDB ---------------------------------------------------------
@@ -146,7 +146,7 @@ class Settings(BaseSettings):
         """Fail at start-up, before any request, if the storage target is unsafe."""
         if self.storage_backend is StorageBackend.AWS:
             raise ValueError(
-                "STORAGE_BACKEND=aws is guarded and cannot be selected in this configuration. "
+                "STORAGE_BACKEND=aws is reserved for deployment configurations. "
                 "Use STORAGE_BACKEND=local for development."
             )
         problems = [

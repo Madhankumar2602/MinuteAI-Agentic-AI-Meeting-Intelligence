@@ -140,7 +140,7 @@ def build_client(
     """Create an S3 or DynamoDB client that honours ``STORAGE_BACKEND``."""
     if backend is StorageBackend.AWS:
         raise UnsafeAwsConfigurationError(
-            "STORAGE_BACKEND=aws is guarded and cannot be selected in this configuration."
+            "STORAGE_BACKEND=aws is reserved for deployment configurations."
         )
 
     problem = local_endpoint_problem(endpoint_url, setting_name)

@@ -3,11 +3,10 @@
 Every route that touches a meeting goes through
 ``authorize_meeting_access``. Concentrating the rule in one function is what
 makes it auditable: there is exactly one place to read to know who can see
-what, and exactly one place to change when sharing arrives.
+what, and exactly one place to change if the rule ever changes.
 
-Sharing (the ``meeting_shares`` table) is deliberately NOT implemented yet.
-It remains in the architecture and in ADR 0004; this function is the extension
-point, so adding it later changes this file and nothing else.
+Access is by ownership (ADR 0004). This function is the single extension point:
+any other rule would change this file and nothing else.
 """
 
 from __future__ import annotations

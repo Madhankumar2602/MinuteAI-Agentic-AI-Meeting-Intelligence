@@ -30,7 +30,7 @@ async def authorize_meeting_access(
 
 - The `meeting_shares` table is **not** created yet.
 - `AccessLevel.READ` / `AccessLevel.WRITE` already exist, and every call site
-  declares which it needs — so when sharing arrives, a `viewer` grant will not
+  declares which it needs — so if a `viewer` grant is ever added it will not
   accidentally confer write access.
 - Every route that names a specific meeting goes through this function. No
   route queries `meetings` by id directly. That invariant is what makes the

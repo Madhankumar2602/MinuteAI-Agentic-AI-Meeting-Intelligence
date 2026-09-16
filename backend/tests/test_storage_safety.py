@@ -142,8 +142,8 @@ def test_all_problems_are_reported_together() -> None:
     )
 
 
-def test_aws_mode_is_not_enabled_yet() -> None:
-    with pytest.raises(ValidationError, match="guarded and cannot be selected"):
+def test_aws_mode_is_refused_outside_a_deployment_configuration() -> None:
+    with pytest.raises(ValidationError, match="reserved for deployment"):
         make_settings(storage_backend="aws")
 
 
@@ -221,7 +221,7 @@ def test_build_client_refuses_aws_or_empty_endpoints(endpoint: str | None) -> No
 
 
 def test_build_client_refuses_aws_mode_for_now() -> None:
-    with pytest.raises(UnsafeAwsConfigurationError, match="guarded and cannot be selected"):
+    with pytest.raises(UnsafeAwsConfigurationError, match="reserved for deployment"):
         _build(backend=StorageBackend.AWS)
 
 
