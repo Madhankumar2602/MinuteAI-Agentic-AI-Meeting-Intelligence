@@ -670,3 +670,116 @@ describe("ask your meetings", () => {
     expect(screen.getByRole("link", { name: "Add a meeting" })).toHaveAttribute("href", "/meetings/new");
   });
 });
+
+describe("follow-up agent", () => {
+  const PROPOSAL = {
+    id: "p1", run_id: "r1", meeting_id: MEETING.id, meeting_title: "Platform sync", meeting_date: MEETING.meeting_date,
+    action_item_id: "a1", decision_id: null, kind: "overdue_action", priority: "high",
+    title: "Overdue by 9 days: Fix the clock synchronisation on the API servers",
+    rationale: "The fix was due on 11 September and is still open [1].", recipients: ["Meera"],
+    draft_subject: "Update on the clock fix", draft_body: "Hi Meera,\n\nCould you share where the clock fix stands?\n\nThanks,\nTest User",
+    drafted_by: "ai",
+    sources: [{
+      number: 1, meeting_id: MEETING.id, meeting_title: "Platform sync", meeting_date: MEETING.meeting_date, kind: "action_item",
+      text: "Action item: Fix the clock synchronisation\nOwner: Meera", char_start: null, char_end: null, score: 0.7,
+    }],
+    status: "proposed", final_subject: null, final_body: null, decided_at: null, decision_note: null, created_at: MEETING.created_at,
+  };
+  const RUN = {
+    id: "r1", trigger: "manual", status: "completed", started_at: MEETING.created_at, finished_at: MEETING.created_at,
+    model: "gemini-3.6-flash", prompt_version: "agent-v1", candidates_found: 3, proposals_created: 1, used_fallback: false, error_code: null,
+    steps: [
+      { step: "observe", total: 3, found: { overdue_action: 1 } },
+      { step: "deduplicate", already_proposed: 2, remaining: 1 },
+      { step: "propose", created: 1, skipped_as_resolved: 0 },
+    ],
+  };
+
+  it("shows the pending count in the sidebar", async () => {
+    mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": { ...DASHBOARD, follow_ups_pending: 3 },
+      "GET /api/v1/agent/proposals": { items: [], pending: 0 },
+      "GET /api/v1/agent/runs": [],
+    });
+    renderApp("/follow-ups");
+    expect(await screen.findByLabelText("3 waiting for approval")).toBeInTheDocument();
+    expect(await screen.findByText("No follow-ups waiting")).toBeInTheDocument();
+  });
+
+  it("runs the agent and shows what it did, step by step", async () => {
+    let listed = { items: [] as object[], pending: 0 };
+    const { requests } = mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "GET /api/v1/agent/proposals": () => ({ body: listed }),
+      "GET /api/v1/agent/runs": [],
+      "POST /api/v1/agent/runs": () => {
+        listed = { items: [PROPOSAL], pending: 1 };
+        return { status: 201, body: RUN };
+      },
+    });
+    renderApp("/follow-ups");
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /Run agent/ }));
+
+    expect(await screen.findByRole("article", { name: PROPOSAL.title })).toBeInTheDocument();
+    const steps = screen.getByRole("list", { name: "What the agent did" });
+    expect(within(steps).getByText("3 situations found")).toBeInTheDocument();
+    expect(within(steps).getByText("2 already proposed, 1 new")).toBeInTheDocument();
+    expect(within(steps).getByText("1 follow-up waiting for your approval")).toBeInTheDocument();
+    expect(requests.filter((r) => r.method === "POST" && r.path === "/api/v1/agent/runs")).toHaveLength(1);
+  });
+
+  it("approves a draft with the user's edits and rejects another", async () => {
+    const second = { ...PROPOSAL, id: "p2", title: "Unresolved: Whether to move auth provider", kind: "unresolved_topic", priority: "low" };
+    const { requests } = mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "GET /api/v1/agent/proposals": { items: [PROPOSAL, second], pending: 2 },
+      "GET /api/v1/agent/runs": [RUN],
+      "POST /api/v1/agent/proposals/p1/approve": { ...PROPOSAL, status: "approved" },
+      "POST /api/v1/agent/proposals/p2/reject": { ...second, status: "rejected" },
+    });
+    renderApp("/follow-ups");
+    const user = userEvent.setup();
+
+    const card = await screen.findByRole("article", { name: PROPOSAL.title });
+    expect(within(card).getByText("To: Meera")).toBeInTheDocument();
+    expect(within(card).getByText("Overdue action item")).toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: /Edit/ }));
+    const message = within(card).getByLabelText("Message");
+    await user.clear(message);
+    await user.type(message, "Hi Meera, any update on the clock fix?");
+    await user.click(within(card).getByRole("button", { name: /Approve with edits/ }));
+
+    await waitFor(() => expect(requests.some((r) => r.path === "/api/v1/agent/proposals/p1/approve")).toBe(true));
+    expect(requests.find((r) => r.path === "/api/v1/agent/proposals/p1/approve")!.body).toEqual({
+      subject: "Update on the clock fix", body: "Hi Meera, any update on the clock fix?",
+    });
+
+    const other = screen.getByRole("article", { name: second.title });
+    await user.click(within(other).getByRole("button", { name: /Reject/ }));
+    await waitFor(() => expect(requests.some((r) => r.path === "/api/v1/agent/proposals/p2/reject")).toBe(true));
+  });
+
+  it("offers approved follow-ups for sending from the user's own email", async () => {
+    const approved = { ...PROPOSAL, status: "approved", final_subject: "Clock fix", final_body: "Any update?", decided_at: MEETING.created_at };
+    mockApi({
+      "GET /api/v1/auth/me": USER,
+      "GET /api/v1/dashboard": DASHBOARD,
+      "GET /api/v1/agent/proposals": { items: [approved], pending: 0 },
+      "GET /api/v1/agent/runs": [],
+    });
+    renderApp("/follow-ups");
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("tab", { name: /Approved/ }));
+    const card = await screen.findByRole("article", { name: PROPOSAL.title });
+    expect(within(card).getByRole("link", { name: /Open in email/ })).toHaveAttribute(
+      "href", "mailto:?subject=Clock%20fix&body=Any%20update%3F",
+    );
+    expect(within(card).queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
+  });
+});

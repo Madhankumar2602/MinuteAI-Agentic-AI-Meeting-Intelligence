@@ -117,6 +117,9 @@ class FakeLLMProvider:
         self.extraction = extraction or platform_sync_extraction()
         # For Ask-your-meetings (M8): what the model "answers". Set per test.
         self.answer = None
+        # For the follow-up agent (M9): an AgentDrafts, or a callable taking the
+        # prompt. None drafts a follow-up for every candidate in the prompt.
+        self.agent_drafts = None
         self.error = error
         self.healthy = healthy
         self.calls: list[dict] = []
@@ -136,6 +139,19 @@ class FakeLLMProvider:
             raise self.error
         # Round-trip through JSON so the fake exercises the same validation
         # path as a real provider response.
+        if schema.__name__ == "AgentDrafts":
+            chosen = self.agent_drafts(prompt) if callable(self.agent_drafts) else self.agent_drafts
+            data = schema.model_validate_json(
+                (chosen or default_agent_drafts(prompt)).model_dump_json()
+            )
+            return StructuredResult(
+                data=data,
+                provider=self.name,
+                model=self.model,
+                usage=LLMUsage(input_tokens=1200, output_tokens=600),
+                latency_ms=5,
+                attempts=1,
+            )
         if schema.__name__ == "GroundedAnswer":
             from app.schemas.ask import GroundedAnswer
 
@@ -288,3 +304,49 @@ class FakeEmbedder:
 
     def health_check(self) -> tuple[bool, str]:
         return True, "fake embedder"
+
+
+# ---------------------------------------------------------------------------
+# Follow-up agent (M9)
+# ---------------------------------------------------------------------------
+
+import re as _re  # noqa: E402
+
+_CANDIDATE_BLOCK = _re.compile(
+    r"=== CANDIDATE (C\d+) ===\n(.*?)(?=\n=== CANDIDATE |\n\nDecide and draft)", _re.S
+)
+
+
+def agent_candidates(prompt: str) -> dict[str, dict]:
+    """Parse the agent prompt: {candidate id: {recipients, sources, text}}."""
+    out = {}
+    for cid, block in _CANDIDATE_BLOCK.findall(prompt):
+        recipients_line = _re.search(r"ALLOWED RECIPIENTS: (.*)", block).group(1)
+        recipients = (
+            []
+            if recipients_line == "(none listed)"
+            else [r.strip() for r in recipients_line.split(",")]
+        )
+        sources = [int(n) for n in _re.findall(r"^\[(\d+)\] ", block, _re.M)]
+        out[cid] = {"recipients": recipients, "sources": sources, "text": block}
+    return out
+
+
+def default_agent_drafts(prompt: str):
+    from app.services.agent.drafting import AgentDrafts, DraftedFollowUp
+
+    return AgentDrafts(
+        drafts=[
+            DraftedFollowUp(
+                candidate_id=cid,
+                follow_up=True,
+                priority="medium",
+                rationale="This needs attention" + (" [1]." if c["sources"] else "."),
+                recipients=c["recipients"],
+                subject=f"Follow-up {cid}",
+                message=f"Hi, following up on {cid} from our meeting. Thanks.",
+                cited_sources=[1] if c["sources"] else [],
+            )
+            for cid, c in agent_candidates(prompt).items()
+        ]
+    )

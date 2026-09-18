@@ -522,6 +522,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agent/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent agent runs */
+        get: operations["list_runs_api_v1_agent_runs_get"];
+        put?: never;
+        /**
+         * Run the follow-up agent over your meetings now
+         * @description Reviews your meetings for overdue and upcoming work, open decisions, and
+         *     unresolved or recurring topics, and drafts follow-ups for you to approve.
+         *     Nothing is sent. The response includes the full step-by-step trace.
+         */
+        post: operations["start_run_api_v1_agent_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Follow-ups proposed by the agent */
+        get: operations["list_proposals_api_v1_agent_proposals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/proposals/{proposal_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a follow-up, optionally with your edits
+         * @description Records your approval and the final wording. MinuteAI does not send it:
+         *     the approved message is ready for you to send from your own email or chat.
+         */
+        post: operations["approve_api_v1_agent_proposals__proposal_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent/proposals/{proposal_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a follow-up; it will not be proposed again */
+        post: operations["reject_api_v1_agent_proposals__proposal_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -606,6 +684,63 @@ export interface components {
             /** Deadline */
             deadline?: string | null;
             priority?: components["schemas"]["ActionItemPriority"] | null;
+        };
+        /** AgentRunResponse */
+        AgentRunResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Trigger */
+            trigger: string;
+            status: components["schemas"]["AgentRunStatus"];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Model
+             * @description The drafting model; null if it was not called.
+             */
+            model: string | null;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Candidates Found */
+            candidates_found: number;
+            /** Proposals Created */
+            proposals_created: number;
+            /**
+             * Used Fallback
+             * @description True when drafts came from templates.
+             */
+            used_fallback: boolean;
+            /**
+             * Steps
+             * @description What the agent did, step by step.
+             */
+            steps: {
+                [key: string]: unknown;
+            }[];
+            /** Error Code */
+            error_code: string | null;
+        };
+        /**
+         * AgentRunStatus
+         * @enum {string}
+         */
+        AgentRunStatus: "running" | "completed" | "failed";
+        /** ApproveRequest */
+        ApproveRequest: {
+            /** Subject */
+            subject?: string | null;
+            /** Body */
+            body?: string | null;
+            /** Note */
+            note?: string | null;
         };
         /** AskRequest */
         AskRequest: {
@@ -726,6 +861,11 @@ export interface components {
             recent_meetings: components["schemas"]["MeetingResponse"][];
             /** Attention */
             attention: components["schemas"]["ActionItemResponse"][];
+            /**
+             * Follow Ups Pending
+             * @default 0
+             */
+            follow_ups_pending: number;
         };
         /** DecisionResponse */
         DecisionResponse: {
@@ -772,6 +912,11 @@ export interface components {
             /** Decision Text */
             decision_text?: string | null;
         };
+        /**
+         * DraftSource
+         * @enum {string}
+         */
+        DraftSource: "ai" | "template";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1268,6 +1413,91 @@ export interface components {
             cached: boolean;
             meeting_status: components["schemas"]["MeetingStatus"];
             job: components["schemas"]["JobResponse"] | null;
+        };
+        /**
+         * ProposalKind
+         * @enum {string}
+         */
+        ProposalKind: "overdue_action" | "due_soon_action" | "unassigned_action" | "open_decision" | "unresolved_topic" | "recurring_topic";
+        /** ProposalList */
+        ProposalList: {
+            /** Items */
+            items: components["schemas"]["ProposalResponse"][];
+            /**
+             * Pending
+             * @description Proposals waiting for a decision.
+             */
+            pending: number;
+        };
+        /**
+         * ProposalPriority
+         * @enum {string}
+         */
+        ProposalPriority: "low" | "medium" | "high";
+        /** ProposalResponse */
+        ProposalResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Run Id */
+            run_id: string | null;
+            /**
+             * Meeting Id
+             * Format: uuid
+             */
+            meeting_id: string;
+            /** Meeting Title */
+            meeting_title: string;
+            /**
+             * Meeting Date
+             * Format: date-time
+             */
+            meeting_date: string;
+            /** Action Item Id */
+            action_item_id: string | null;
+            /** Decision Id */
+            decision_id: string | null;
+            kind: components["schemas"]["ProposalKind"];
+            priority: components["schemas"]["ProposalPriority"];
+            /** Title */
+            title: string;
+            /** Rationale */
+            rationale: string;
+            /** Recipients */
+            recipients: string[];
+            /** Draft Subject */
+            draft_subject: string;
+            /** Draft Body */
+            draft_body: string;
+            drafted_by: components["schemas"]["DraftSource"];
+            /** Sources */
+            sources: components["schemas"]["AskSource"][];
+            status: components["schemas"]["ProposalStatus"];
+            /** Final Subject */
+            final_subject: string | null;
+            /** Final Body */
+            final_body: string | null;
+            /** Decided At */
+            decided_at: string | null;
+            /** Decision Note */
+            decision_note: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * ProposalStatus
+         * @enum {string}
+         */
+        ProposalStatus: "proposed" | "approved" | "rejected";
+        /** RejectRequest */
+        RejectRequest: {
+            /** Note */
+            note?: string | null;
         };
         /** SearchResponse */
         SearchResponse: {
@@ -2538,6 +2768,166 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_v1_agent_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_run_api_v1_agent_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunResponse"];
+                };
+            };
+            /** @description A run is already in progress (agent_run_in_progress). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_proposals_api_v1_agent_proposals_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["ProposalStatus"] | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_api_v1_agent_proposals__proposal_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_api_v1_agent_proposals__proposal_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RejectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalResponse"];
                 };
             };
             /** @description Validation Error */

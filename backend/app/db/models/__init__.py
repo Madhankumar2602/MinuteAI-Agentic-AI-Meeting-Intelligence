@@ -4,6 +4,15 @@ from app.db.models.action_item import (
     ActionItemPriority,
     ActionItemStatus,
 )
+from app.db.models.agent import (
+    AgentRun,
+    AgentRunStatus,
+    DraftSource,
+    FollowUpProposal,
+    ProposalKind,
+    ProposalPriority,
+    ProposalStatus,
+)
 from app.db.models.chunk import EMBEDDING_DIMENSIONS, MINUTES_SOURCES, ChunkSource, MeetingChunk
 from app.db.models.decision import Decision, DecisionStatus
 from app.db.models.media import MeetingMedia
@@ -14,6 +23,13 @@ from app.db.models.transcript import HUMAN_SOURCES, Transcript, TranscriptSource
 from app.db.models.user import User
 
 __all__ = [
+    "AgentRun",
+    "AgentRunStatus",
+    "DraftSource",
+    "FollowUpProposal",
+    "ProposalKind",
+    "ProposalPriority",
+    "ProposalStatus",
     "MINUTES_SOURCES",
     "ChunkSource",
     "HUMAN_SOURCES",

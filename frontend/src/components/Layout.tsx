@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  Bot,
   CalendarDays,
   CheckSquare,
   LayoutDashboard,
@@ -57,6 +58,7 @@ export function Layout() {
   // The overdue count in the sidebar shares the dashboard query's cache.
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard, enabled: Boolean(user) });
   const overdue = dashboard.data?.action_items.overdue ?? 0;
+  const followUps = dashboard.data?.follow_ups_pending ?? 0;
 
   if (loading) {
     return (
@@ -92,6 +94,10 @@ export function Layout() {
           </NavLink>
           <NavLink to="/ask" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
             <MessageSquareText size={18} /> Ask your meetings
+          </NavLink>
+          <NavLink to="/follow-ups" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+            <Bot size={18} /> Follow-ups
+            {followUps > 0 && <span className="nav-count pending" aria-label={`${followUps} waiting for approval`}>{followUps}</span>}
           </NavLink>
         </nav>
 

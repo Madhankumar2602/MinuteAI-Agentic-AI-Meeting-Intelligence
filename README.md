@@ -8,7 +8,9 @@ MinuteAI turns any meeting into **structured Minutes of Meeting (MOM)** and a
 a video: it transcribes when needed, extracts what matters with Google Gemini,
 checks the result against the source, and then lets you search everything you
 have ever recorded and ask questions across it — with every answer traced back
-to the meeting it came from.
+to the meeting it came from. A controlled AI agent watches for overdue work, open
+decisions and topics that keep coming back, and drafts follow-ups that you approve
+before anything is sent.
 
 | | |
 |---|---|
@@ -16,7 +18,7 @@ to the meeting it came from.
 | **Data** | PostgreSQL 16 + pgvector · DynamoDB · Amazon S3 |
 | **AI** | Google Gemini · all-MiniLM-L6-v2 embeddings (local, ONNX Runtime) |
 | **Frontend** | React 19 · TypeScript · Vite · TanStack Query |
-| **Quality** | 298 backend tests · 62 frontend tests · ruff · oxlint · strict TypeScript |
+| **Quality** | 319 backend tests · 66 frontend tests · ruff · oxlint · strict TypeScript |
 
 ---
 
@@ -30,14 +32,15 @@ to the meeting it came from.
 6. [How a meeting is processed, step by step](#6-how-a-meeting-is-processed-step-by-step)
 7. [Data model](#7-data-model)
 8. [Semantic search and Ask your meetings](#8-semantic-search-and-ask-your-meetings)
-9. [The web application](#9-the-web-application)
-10. [Security and privacy](#10-security-and-privacy)
-11. [Testing and quality](#11-testing-and-quality)
-12. [Project structure](#12-project-structure)
-13. [Getting started](#13-getting-started)
-14. [API reference](#14-api-reference)
-15. [Troubleshooting](#15-troubleshooting)
-16. [Design decisions](#16-design-decisions)
+9. [The follow-up agent](#9-the-follow-up-agent)
+10. [The web application](#10-the-web-application)
+11. [Security and privacy](#11-security-and-privacy)
+12. [Testing and quality](#12-testing-and-quality)
+13. [Project structure](#13-project-structure)
+14. [Getting started](#14-getting-started)
+15. [API reference](#15-api-reference)
+16. [Troubleshooting](#16-troubleshooting)
+17. [Design decisions](#17-design-decisions)
 
 ---
 
@@ -76,6 +79,8 @@ and verifiable, in about a minute, without anyone writing them by hand.
                     Professional PDF ──►  stored in S3  ──►  view / download
                                             ▼
               Embeddings (pgvector) ──► Semantic search ──► Ask your meetings
+                                            ▼
+              Follow-up agent ──► drafted follow-ups ──► you approve or reject
 ```
 
 Everything after the input is automatic. The user chooses how to give MinuteAI
@@ -153,6 +158,16 @@ deleted rather than processed.
 - **Ask your meetings**: questions answered from your transcripts *and* minutes,
   with numbered citations, or an honest "not found" when the answer is not there.
 
+**Following up**
+
+- A **follow-up agent** finds overdue and soon-due action items, tasks with no
+  owner, decisions nobody confirmed, and unresolved topics, including topics
+  raised again in later meetings.
+- It recalls related passages from past meetings and drafts a short, cited
+  follow-up for each one.
+- You approve it, edit it, or reject it. Nothing is sent automatically, and a
+  rejected follow-up is never proposed again.
+
 **Operations**
 
 - Background processing on a DynamoDB job queue with leases, heartbeats,
@@ -168,16 +183,17 @@ deleted rather than processed.
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
 │  React SPA — Vite · TypeScript · TanStack Query                            │
-│  Dashboard · Meetings · Minutes · Action items · Search · Ask              │
+│  Dashboard · Meetings · Minutes · Action items · Search · Ask · Follow-ups │
 └───────────────┬────────────────────────────────────────┬───────────────────┘
                 │ HTTPS + JWT                            │ presigned POST
 ┌───────────────▼────────────────────────────────────┐   │  (uploads bypass
 │  FastAPI                                           │   │   the API entirely)
 │  api/v1   auth · meetings · intelligence · media · │   │
-│           jobs · mom · search · ask · dashboard    │   │
+│           jobs · mom · search · ask · agent ·      │   │
+│           dashboard                                │   │
 │  services authorization · intelligence · grounding │   │
 │           transcription · audio · mom · embeddings │   │
-│           rag · job_store · storage · llm          │   │
+│           rag · agent · job_store · storage · llm  │   │
 │  worker   claim → transcribe → index → extract →   │   │
 │           index minutes → PDF                      │   │
 └──┬──────────────┬───────────────┬──────────────┬───┘   │
@@ -194,7 +210,7 @@ deleted rather than processed.
 
 | Store | Holds | Why this store |
 |---|---|---|
-| **PostgreSQL 16 + pgvector** | Users, meetings, transcripts, minutes, decisions, action items, participants, and the embedding vectors | Relational integrity and transactions for the source of truth; vectors live in the same database, so access control and similarity search happen in one query instead of two systems that can disagree |
+| **PostgreSQL 16 + pgvector** | Users, meetings, transcripts, minutes, decisions, action items, participants, the embedding vectors, and the agent's runs and proposals | Relational integrity and transactions for the source of truth; vectors live in the same database, so access control and similarity search happen in one query instead of two systems that can disagree |
 | **DynamoDB** | Processing jobs, their step events, and per-meeting locks | Schema-flexible workflow state with conditional writes for exactly-once claiming, and TTL that expires operational history without a cleanup job |
 | **Amazon S3** | Recordings, archived raw transcription output, generated PDFs | Purpose-built for large files; presigned URLs let uploads and downloads bypass the API process |
 
@@ -243,7 +259,9 @@ users 1──N meetings 1──1 transcripts
                  ├──N decisions
                  ├──N action_items ──0..1 meeting_participants
                  ├──1 meeting_media        (the uploaded recording)
-                 └──N meeting_chunks       (vector(384) + provenance)
+                 ├──N meeting_chunks       (vector(384) + provenance)
+                 └──N follow_up_proposals  (drafts awaiting approval)
+users 1──N agent_runs 1──N follow_up_proposals
 ```
 
 | Table | Purpose |
@@ -256,6 +274,8 @@ users 1──N meetings 1──1 transcripts
 | `decisions` | Decision text, context, evidence quote and whether it was verified, status |
 | `action_items` | Task, owner name and link, deadline plus original wording, priority, status, evidence |
 | `meeting_participants` | Display name, normalised key, optional link to a user |
+| `agent_runs` | One row per follow-up agent run: status, model, counts, whether templates were used, and the step-by-step trace |
+| `follow_up_proposals` | What the agent proposed and why: kind, priority, recipients, draft, cited passages, and the person's decision with the final wording |
 | `meeting_chunks` | Transcript and minutes passages with their 384-dimension vectors, an HNSW cosine index, and the transcript hash, model and chunker version they were built from |
 
 Enumerations are `VARCHAR` with database `CHECK` constraints, so invalid values
@@ -306,7 +326,55 @@ links to the highlighted transcript passage or to the meeting's minutes.
 
 ---
 
-## 9. The web application
+## 9. The follow-up agent
+
+Search and Ask your meetings give MinuteAI a memory. The follow-up agent acts on
+it, in a controlled way: it proposes, and a person decides.
+
+```
+observe ──► deduplicate ──► prioritise ──► recall ──► decide + draft ──► verify ──► propose
+SQL          never the       most urgent    related    one structured     code        waits for
+detectors    same thing      first, at      passages   Gemini call for    guard-      your approval
+             twice           most 10        (RAG)      every candidate    rails
+```
+
+**What it looks for**, with plain SQL over your own meetings:
+
+| Situation | Rule |
+|---|---|
+| Overdue action item | Open, deadline passed; high priority after a week or for high-priority tasks |
+| Due soon | Open, due within 2 days |
+| No owner | Open action item nobody owns |
+| Open decision | Still marked open two weeks after the meeting |
+| Unresolved topic | A pending item from minutes in the last 60 days |
+| Recurring topic | A pending item that semantic search finds again in another meeting's pending items; reported once, naming every meeting |
+
+**What the model does, and what code checks.** For each candidate, Gemini decides
+whether a follow-up is needed, how urgent it is and why, citing the recalled
+passages, then writes a short subject and message. Code then enforces the limits:
+
+1. Only candidates that were given are accepted; invented ones are ignored.
+2. Recipients come only from the task's owner or the meeting's participants.
+3. Citations must point at a passage that was shown.
+4. "Already resolved" is accepted only with a cited passage as evidence.
+5. An empty or over-long draft is replaced by a plain template built from the facts.
+
+If Gemini is unavailable, every candidate still gets a clearly labelled template
+draft, so a quota limit never leaves you with nothing.
+
+**Every run is recorded.** The run stores each step: what was found, what was
+skipped as already proposed, which passages were recalled, and what the checks
+corrected. The Follow-ups page shows this trace. Only one run per user can be in
+progress at a time.
+
+**You stay in control.** Each proposal shows its reason, recipients, draft and
+sources. **Approve** it as written or after editing, or **Reject** it. An
+approved follow-up is ready to open in your email client or copy; MinuteAI never
+sends it for you.
+
+---
+
+## 10. The web application
 
 | Page | What it does |
 |---|---|
@@ -317,6 +385,7 @@ links to the highlighted transcript passage or to the meeting's minutes.
 | **Action items** | Everything across meetings, grouped as overdue, today, this week, later, no deadline and closed |
 | **Search** | Semantic search (Ctrl K) with match strength; results open the transcript at the passage |
 | **Ask your meetings** | A question thread; answers show citation chips that jump to their sources |
+| **Follow-ups** | Run the agent, see what it did step by step, then approve, edit or reject each drafted follow-up; the sidebar shows how many are waiting |
 
 The interface is a hand-written design system: light and dark themes applied
 before first paint, accessible dialogs and labels, and an off-canvas sidebar on
@@ -325,7 +394,7 @@ server change that breaks the UI fails the TypeScript build.
 
 ---
 
-## 10. Security and privacy
+## 11. Security and privacy
 
 - **Passwords** hashed with Argon2id; login and registration give identical
   answers for unknown and known accounts, so neither reveals whether an email
@@ -341,6 +410,10 @@ server change that breaks the UI fails the TypeScript build.
 - **Prompt injection** is defended in layers: untrusted text is fenced, fence
   markers inside it are neutralised, the model is told the content is data, the
   output is schema-constrained, and nothing the model returns is executed.
+- **The agent cannot act on its own.** What it may follow up is chosen by SQL
+  over the user's own records; recipients, citations and "already resolved"
+  claims are checked in code; and every proposal waits for a person to approve
+  it. MinuteAI never sends a message itself.
 - **Secrets** live in `.env` (git-ignored), are typed as secrets in code, and are
   redacted from logs. Meeting text is never logged.
 - **Local development cannot reach real cloud accounts.** `STORAGE_BACKEND=local`
@@ -350,11 +423,11 @@ server change that breaks the UI fails the TypeScript build.
 
 ---
 
-## 11. Testing and quality
+## 12. Testing and quality
 
 ```bash
-pytest                    # from backend/  — 298 tests
-npm test                  # from frontend/ —  62 tests
+pytest                    # from backend/  — 319 tests
+npm test                  # from frontend/ —  66 tests
 ```
 
 Tests run against **real infrastructure**, not mocks of it: a dedicated
@@ -370,12 +443,14 @@ same interface as the real one.
 | Media | Real MP4 files built in the test suite: audio extraction, exact durations, video without sound |
 | Minutes and PDF | PDFs downloaded through their signed links and read back: sections, escaping, fonts, pagination, reuse, cleanup |
 | Retrieval and answers | Attribution, grounding, isolation between users, scoping, relevance gate |
+| Follow-up agent | Every detector, recurring topics, one model call per run, each guardrail, template fallback, deduplication, approval rules, single flight, isolation |
 | Web app | The real routes rendered against a mocked API, asserted through roles and labels |
 | Live (opt-in) | Real Gemini calls: extraction, transcription, and grounded answers |
 
 Safeguards are **mutation-checked**: each one is deliberately broken to confirm a
 test fails. Removing the ownership filter, the citation check, the relevance
-gate, PDF escaping or the storage guard all break the suite.
+gate, PDF escaping, the storage guard or any of the agent's guardrails all break
+the suite.
 
 Static analysis: `ruff` (lint + format) on the backend, `oxlint` and strict
 TypeScript on the frontend, and `alembic check` to prove models and migrations
@@ -383,7 +458,7 @@ agree.
 
 ---
 
-## 12. Project structure
+## 13. Project structure
 
 ```
 .
@@ -392,7 +467,7 @@ agree.
 ├─ backend/
 │  ├─ app/
 │  │  ├─ main.py               application factory, lifespan, embedded worker
-│  │  ├─ api/v1/               auth · meetings · intelligence · media · jobs · mom · search · ask · dashboard
+│  │  ├─ api/v1/               auth · meetings · intelligence · media · jobs · mom · search · ask · agent · dashboard
 │  │  ├─ core/                 config, security, logging, middleware, AWS client guard
 │  │  ├─ db/                   models and Alembic migrations
 │  │  ├─ schemas/              request/response models and the LLM contracts
@@ -405,6 +480,7 @@ agree.
 │  │  │  ├─ mom/               minutes builder, review flags, PDF renderer, PDF storage
 │  │  │  ├─ embeddings/        chunking, local model, indexing, vector search
 │  │  │  ├─ rag.py             Ask your meetings
+│  │  │  ├─ agent/             follow-up agent: detectors, drafting + guardrails, runner
 │  │  │  ├─ job_store.py       DynamoDB job queue
 │  │  │  ├─ storage.py         S3 access and presigned URLs
 │  │  │  └─ authorization.py   the single access rule
@@ -417,7 +493,7 @@ agree.
 │     ├─ auth/                 session and auth context
 │     ├─ components/           design system, minutes view, PDF preview, processing stepper
 │     ├─ lib/                  pure helpers (formatting, citations, grouping, theme)
-│     └─ pages/                dashboard, meetings, meeting, action items, search, ask
+│     └─ pages/                dashboard, meetings, meeting, action items, search, ask, follow-ups
 ├─ docs/
 │  ├─ architecture.md          full system design
 │  ├─ PROJECT_STATUS.md        what each part delivers, and how it was verified
@@ -428,7 +504,7 @@ agree.
 
 ---
 
-## 13. Getting started
+## 14. Getting started
 
 ### Prerequisites
 
@@ -675,7 +751,7 @@ python -m app.workers.processing
 
 ---
 
-## 14. API reference
+## 15. API reference
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -706,11 +782,16 @@ python -m app.workers.processing
 | GET | `/api/v1/action-items` | ✔ | All my action items (`status`, `overdue`, `meeting_id`) |
 | PATCH | `/api/v1/action-items/{id}` | ✔ | Correct task / status / deadline / priority |
 | PATCH | `/api/v1/decisions/{id}` | ✔ | Correct text / status |
-| GET | `/api/v1/dashboard` | ✔ | Counts, recent meetings, action items needing attention |
+| GET | `/api/v1/dashboard` | ✔ | Counts, recent meetings, action items needing attention, follow-ups waiting |
 | GET | `/api/v1/search` | ✔ | Semantic search over processed transcripts (`q`, `limit`, `meeting_id`) |
 | GET | `/api/v1/meetings/{id}/mom` | ✔ | Structured Minutes of Meeting (409 `minutes_not_ready` before processing) |
 | POST | `/api/v1/meetings/{id}/mom/pdf` | ✔ | Generate or reuse the MOM PDF; returns view and download links |
 | POST | `/api/v1/ask` | ✔ | Answer a question from your meetings with cited sources (`question`, optional `meeting_ids`) |
+| POST | `/api/v1/agent/runs` | ✔ | Run the follow-up agent now; returns the run with its step-by-step trace (409 while one is running) |
+| GET | `/api/v1/agent/runs` | ✔ | Recent agent runs |
+| GET | `/api/v1/agent/proposals` | ✔ | Proposed follow-ups (`status`: proposed / approved / rejected) and the pending count |
+| POST | `/api/v1/agent/proposals/{id}/approve` | ✔ | Approve, optionally with an edited `subject` / `body` and a `note` |
+| POST | `/api/v1/agent/proposals/{id}/reject` | ✔ | Reject; it will not be proposed again |
 
 Errors share one envelope:
 
@@ -723,7 +804,7 @@ every log line for that request.
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -745,13 +826,16 @@ every log line for that request.
 | Search returns nothing for a meeting | The meeting has not been processed yet, or its transcript changed | Process it again (no second LLM call if results are current) |
 | `/ask` returns 503 `llm_rate_limited` | Gemini quota exhausted | Wait for the quota to reset; unrelated questions still get an immediate "not found" |
 | Ask says "not found" for a processed meeting | Minutes not indexed yet or the transcript changed | Process the meeting again (no extra LLM call if results are current) |
+| Run agent returns 409 `agent_run_in_progress` | A run is already in progress for you | Wait for it to finish; an interrupted run stops blocking after 10 minutes |
+| Follow-ups are marked "Template" | Gemini was unavailable during the run | Approve them as they are, or edit them; later runs use the AI again |
+| The agent proposes nothing new | Everything it found was already proposed, approved or rejected | Expected: a situation is proposed once; a changed deadline is a new situation |
 | Job fails with `no_audio_track` | The uploaded video has no sound | Upload a recording with audio, or add notes / a transcript |
 | `/mom` returns 409 `minutes_not_ready` | The meeting has not been processed | Add content and process it |
 | Tests fail on a fresh clone | `minuteai_test` missing | `docker compose down -v && docker compose up -d` (⚠️ destroys local data) |
 
 ---
 
-## 16. Design decisions
+## 17. Design decisions
 
 Every significant choice is recorded as an architecture decision record in
 [docs/adr](docs/adr), with the alternatives that were rejected and why:
@@ -772,6 +856,7 @@ Every significant choice is recorded as an architecture decision record in
 | [0012](docs/adr/0012-local-embeddings-and-semantic-search.md) | Local embeddings via ONNX Runtime, turn-based chunking, filtered HNSW search |
 | [0013](docs/adr/0013-minutes-of-meeting-and-pdf.md) | One Minutes-of-Meeting model, review flags, PDF stored by content hash |
 | [0014](docs/adr/0014-ask-your-meetings-rag.md) | RAG over transcripts and minutes, with citation verification in code |
+| [0015](docs/adr/0015-controlled-follow-up-agent.md) | A controlled follow-up agent: code-decided candidates, one model call, guardrails in code, human approval |
 
 Further reading: [docs/architecture.md](docs/architecture.md) for the full system
 design, and [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for what each part

@@ -1664,6 +1664,271 @@
      }
     ]
    }
+  },
+  "/api/v1/agent/runs": {
+   "post": {
+    "tags": [
+     "follow-up agent"
+    ],
+    "summary": "Run the follow-up agent over your meetings now",
+    "description": "Reviews your meetings for overdue and upcoming work, open decisions, and\nunresolved or recurring topics, and drafts follow-ups for you to approve.\nNothing is sent. The response includes the full step-by-step trace.",
+    "operationId": "start_run_api_v1_agent_runs_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AgentRunResponse"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "A run is already in progress (agent_run_in_progress)."
+     }
+    }
+   },
+   "get": {
+    "tags": [
+     "follow-up agent"
+    ],
+    "summary": "Recent agent runs",
+    "operationId": "list_runs_api_v1_agent_runs_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 50,
+       "minimum": 1,
+       "default": 10,
+       "title": "Limit"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "array",
+         "items": {
+          "$ref": "#/components/schemas/AgentRunResponse"
+         },
+         "title": "Response List Runs Api V1 Agent Runs Get"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/agent/proposals": {
+   "get": {
+    "tags": [
+     "follow-up agent"
+    ],
+    "summary": "Follow-ups proposed by the agent",
+    "operationId": "list_proposals_api_v1_agent_proposals_get",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "$ref": "#/components/schemas/ProposalStatus"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "maximum": 200,
+       "minimum": 1,
+       "default": 100,
+       "title": "Limit"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalList"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/agent/proposals/{proposal_id}/approve": {
+   "post": {
+    "tags": [
+     "follow-up agent"
+    ],
+    "summary": "Approve a follow-up, optionally with your edits",
+    "description": "Records your approval and the final wording. MinuteAI does not send it:\nthe approved message is ready for you to send from your own email or chat.",
+    "operationId": "approve_api_v1_agent_proposals__proposal_id__approve_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "proposal_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Proposal Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ApproveRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/agent/proposals/{proposal_id}/reject": {
+   "post": {
+    "tags": [
+     "follow-up agent"
+    ],
+    "summary": "Reject a follow-up; it will not be proposed again",
+    "operationId": "reject_api_v1_agent_proposals__proposal_id__reject_post",
+    "security": [
+     {
+      "OAuth2PasswordBearer": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "proposal_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Proposal Id"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RejectRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
   }
  },
  "components": {
@@ -1907,6 +2172,157 @@
     "type": "object",
     "title": "ActionItemUpdateRequest",
     "description": "Human corrections to an extracted action item. Every field optional.\n\n``deadline`` and ``priority`` may be set to null deliberately (to clear\nthem); ``task`` and ``status`` may not."
+   },
+   "AgentRunResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "trigger": {
+      "type": "string",
+      "title": "Trigger"
+     },
+     "status": {
+      "$ref": "#/components/schemas/AgentRunStatus"
+     },
+     "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Started At"
+     },
+     "finished_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Finished At"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model",
+      "description": "The drafting model; null if it was not called."
+     },
+     "prompt_version": {
+      "type": "string",
+      "title": "Prompt Version"
+     },
+     "candidates_found": {
+      "type": "integer",
+      "title": "Candidates Found"
+     },
+     "proposals_created": {
+      "type": "integer",
+      "title": "Proposals Created"
+     },
+     "used_fallback": {
+      "type": "boolean",
+      "title": "Used Fallback",
+      "description": "True when drafts came from templates."
+     },
+     "steps": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Steps",
+      "description": "What the agent did, step by step."
+     },
+     "error_code": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error Code"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "trigger",
+     "status",
+     "started_at",
+     "finished_at",
+     "model",
+     "prompt_version",
+     "candidates_found",
+     "proposals_created",
+     "used_fallback",
+     "steps",
+     "error_code"
+    ],
+    "title": "AgentRunResponse"
+   },
+   "AgentRunStatus": {
+    "type": "string",
+    "enum": [
+     "running",
+     "completed",
+     "failed"
+    ],
+    "title": "AgentRunStatus"
+   },
+   "ApproveRequest": {
+    "properties": {
+     "subject": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 300,
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Subject"
+     },
+     "body": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 5000,
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Body"
+     },
+     "note": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 1000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     }
+    },
+    "type": "object",
+    "title": "ApproveRequest"
    },
    "AskRequest": {
     "properties": {
@@ -2170,6 +2586,11 @@
       },
       "type": "array",
       "title": "Attention"
+     },
+     "follow_ups_pending": {
+      "type": "integer",
+      "title": "Follow Ups Pending",
+      "default": 0
      }
     },
     "type": "object",
@@ -2293,6 +2714,14 @@
     },
     "type": "object",
     "title": "DecisionUpdateRequest"
+   },
+   "DraftSource": {
+    "type": "string",
+    "enum": [
+     "ai",
+     "template"
+    ],
+    "title": "DraftSource"
    },
    "HTTPValidationError": {
     "properties": {
@@ -3572,6 +4001,253 @@
     ],
     "title": "ProcessSubmissionResponse",
     "description": "Response to POST /meetings/{id}/process.\n\n* 202 with ``job`` set: work was queued (or an identical job was already\n  active and is returned instead of starting a duplicate).\n* 200 with ``job`` null and ``cached`` true: stored results are already\n  current for this transcript, prompt, and model. Nothing was queued."
+   },
+   "ProposalKind": {
+    "type": "string",
+    "enum": [
+     "overdue_action",
+     "due_soon_action",
+     "unassigned_action",
+     "open_decision",
+     "unresolved_topic",
+     "recurring_topic"
+    ],
+    "title": "ProposalKind"
+   },
+   "ProposalList": {
+    "properties": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/ProposalResponse"
+      },
+      "type": "array",
+      "title": "Items"
+     },
+     "pending": {
+      "type": "integer",
+      "title": "Pending",
+      "description": "Proposals waiting for a decision."
+     }
+    },
+    "type": "object",
+    "required": [
+     "items",
+     "pending"
+    ],
+    "title": "ProposalList"
+   },
+   "ProposalPriority": {
+    "type": "string",
+    "enum": [
+     "low",
+     "medium",
+     "high"
+    ],
+    "title": "ProposalPriority"
+   },
+   "ProposalResponse": {
+    "properties": {
+     "id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Id"
+     },
+     "run_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Run Id"
+     },
+     "meeting_id": {
+      "type": "string",
+      "format": "uuid",
+      "title": "Meeting Id"
+     },
+     "meeting_title": {
+      "type": "string",
+      "title": "Meeting Title"
+     },
+     "meeting_date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Meeting Date"
+     },
+     "action_item_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Action Item Id"
+     },
+     "decision_id": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "uuid"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decision Id"
+     },
+     "kind": {
+      "$ref": "#/components/schemas/ProposalKind"
+     },
+     "priority": {
+      "$ref": "#/components/schemas/ProposalPriority"
+     },
+     "title": {
+      "type": "string",
+      "title": "Title"
+     },
+     "rationale": {
+      "type": "string",
+      "title": "Rationale"
+     },
+     "recipients": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Recipients"
+     },
+     "draft_subject": {
+      "type": "string",
+      "title": "Draft Subject"
+     },
+     "draft_body": {
+      "type": "string",
+      "title": "Draft Body"
+     },
+     "drafted_by": {
+      "$ref": "#/components/schemas/DraftSource"
+     },
+     "sources": {
+      "items": {
+       "$ref": "#/components/schemas/AskSource"
+      },
+      "type": "array",
+      "title": "Sources"
+     },
+     "status": {
+      "$ref": "#/components/schemas/ProposalStatus"
+     },
+     "final_subject": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Final Subject"
+     },
+     "final_body": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Final Body"
+     },
+     "decided_at": {
+      "anyOf": [
+       {
+        "type": "string",
+        "format": "date-time"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided At"
+     },
+     "decision_note": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decision Note"
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Created At"
+     }
+    },
+    "type": "object",
+    "required": [
+     "id",
+     "run_id",
+     "meeting_id",
+     "meeting_title",
+     "meeting_date",
+     "action_item_id",
+     "decision_id",
+     "kind",
+     "priority",
+     "title",
+     "rationale",
+     "recipients",
+     "draft_subject",
+     "draft_body",
+     "drafted_by",
+     "sources",
+     "status",
+     "final_subject",
+     "final_body",
+     "decided_at",
+     "decision_note",
+     "created_at"
+    ],
+    "title": "ProposalResponse"
+   },
+   "ProposalStatus": {
+    "type": "string",
+    "enum": [
+     "proposed",
+     "approved",
+     "rejected"
+    ],
+    "title": "ProposalStatus"
+   },
+   "RejectRequest": {
+    "properties": {
+     "note": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 1000
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Note"
+     }
+    },
+    "type": "object",
+    "title": "RejectRequest"
    },
    "SearchResponse": {
     "properties": {

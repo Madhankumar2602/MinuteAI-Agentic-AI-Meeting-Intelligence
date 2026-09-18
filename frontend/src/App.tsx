@@ -8,6 +8,7 @@ import { ActionItemsPage } from "./pages/ActionItemsPage";
 import { AskPage } from "./pages/AskPage";
 import { LoginPage, RegisterPage } from "./pages/AuthPages";
 import { DashboardPage } from "./pages/DashboardPage";
+import { FollowUpsPage } from "./pages/FollowUpsPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage";
 import { MeetingsPage } from "./pages/MeetingsPage";
 import { NewMeetingPage } from "./pages/NewMeetingPage";
@@ -27,6 +28,7 @@ export function AppRoutes() {
         <Route path="action-items" element={<ActionItemsPage />} />
         <Route path="search" element={<SearchPage />} />
         <Route path="ask" element={<AskPage />} />
+        <Route path="follow-ups" element={<FollowUpsPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

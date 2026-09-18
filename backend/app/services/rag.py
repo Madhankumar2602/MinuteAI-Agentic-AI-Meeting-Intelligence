@@ -157,9 +157,47 @@ async def build_sources(db: AsyncSession, hits: list[SearchHit]) -> list[Source]
     return sources
 
 
-def _header(source: Source) -> str:
+def source_header(source: Source) -> str:
+    """The line that introduces a source to the model: meeting, date, kind."""
     hit = source.hit
     return f"{hit.meeting_title} · {hit.meeting_date.date().isoformat()} · {KIND_LABEL[hit.source_kind]}"
+
+
+async def retrieve_context(
+    db: AsyncSession,
+    *,
+    owner_id: uuid.UUID,
+    query: str,
+    embedder: EmbeddingProvider,
+    meeting_ids: list[uuid.UUID] | None = None,
+    top_k: int | None = None,
+) -> tuple[list[Source], int]:
+    """The retrieval half of RAG, shared by Ask-your-meetings and the agent (M9).
+
+    Returns (sources, candidates considered). Sources are numbered from 1, drawn
+    from every chunk kind, limited to ``owner_id``'s meetings in the same SQL
+    statement as the ranking, gated by relevance, capped per meeting, and built
+    from live records for decisions and action items. Callers that scope by
+    ``meeting_ids`` must authorise those meetings first.
+    """
+    k = top_k or settings.rag_top_k
+    vector = await embedder.embed_query(query)
+    candidates = await semantic_search(
+        db,
+        owner_id=owner_id,
+        query_vector=vector,
+        model=embedder.model,
+        limit=k * 3,
+        meeting_ids=meeting_ids,
+        sources=tuple(ChunkSource),
+    )
+    hits = select_hits(
+        candidates,
+        top_k=k,
+        max_per_meeting=settings.rag_max_per_meeting,
+        min_score=settings.rag_min_score,
+    )
+    return await build_sources(db, hits), len(candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -258,23 +296,9 @@ async def ask(
         )
         return response
 
-    vector = await embedder.embed_query(question)
-    candidates = await semantic_search(
-        db,
-        owner_id=user.id,
-        query_vector=vector,
-        model=embedder.model,
-        limit=settings.rag_top_k * 3,
-        meeting_ids=meeting_ids,
-        sources=tuple(ChunkSource),
+    sources, candidate_count = await retrieve_context(
+        db, owner_id=user.id, query=question, embedder=embedder, meeting_ids=meeting_ids
     )
-    hits = select_hits(
-        candidates,
-        top_k=settings.rag_top_k,
-        max_per_meeting=settings.rag_max_per_meeting,
-        min_score=settings.rag_min_score,
-    )
-    sources = await build_sources(db, hits)
 
     if not sources:
         indexed = await db.scalar(
@@ -287,12 +311,12 @@ async def ask(
         )
         if not indexed:
             return respond("no_indexed_meetings", NO_MEETINGS_ANSWER)
-        return respond("insufficient_context", NOT_FOUND_ANSWER, retrieved=len(candidates))
+        return respond("insufficient_context", NOT_FOUND_ANSWER, retrieved=candidate_count)
 
     result = await llm.generate_structured(
         system_instruction=ASK_SYSTEM_INSTRUCTION,
         prompt=build_ask_prompt(
-            question=question, sources=[(s.number, _header(s), s.text) for s in sources]
+            question=question, sources=[(s.number, source_header(s), s.text) for s in sources]
         ),
         schema=GroundedAnswer,
         temperature=0.0,

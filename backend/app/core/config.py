@@ -140,6 +140,22 @@ class Settings(BaseSettings):
     # M6 live checks (unrelated passages < 0.2).
     rag_min_score: float = Field(default=0.2, ge=-1, le=1)
 
+    # ---- Follow-up agent (M9, ADR 0015) --------------------------------------
+    # Hard limits on what one run may do. The agent proposes at most this many
+    # follow-ups per run and calls the model at most once.
+    agent_max_candidates: int = Field(default=10, ge=1, le=30)
+    # An open action item due within this many days gets a reminder.
+    agent_due_soon_days: int = Field(default=2, ge=0, le=14)
+    # A decision still open this many days after its meeting is worth confirming.
+    agent_decision_stale_days: int = Field(default=14, ge=1, le=365)
+    # Only meetings from the last N days are scanned for unresolved topics.
+    agent_lookback_days: int = Field(default=60, ge=1, le=730)
+    # Similarity above which an unresolved topic counts as raised again in
+    # another meeting.
+    agent_recurring_min_score: float = Field(default=0.6, ge=0, le=1)
+    # Passages recalled from past meetings for each follow-up draft.
+    agent_context_passages: int = Field(default=3, ge=0, le=8)
+
     # ---- Validation --------------------------------------------------------
     @model_validator(mode="after")
     def _check_storage_backend(self) -> Self:

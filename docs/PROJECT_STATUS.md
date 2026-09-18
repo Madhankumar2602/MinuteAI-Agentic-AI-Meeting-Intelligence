@@ -1,8 +1,8 @@
 # MinuteAI — Project Status
 
-**Last updated:** 2026-09-15
+**Last updated:** 2026-09-18
 **Core workflow:** notes / transcript / audio / video → structured Minutes of Meeting → PDF ✅
-**Intelligence layers:** semantic search ✅ · Ask your meetings (grounded RAG) ✅
+**Intelligence layers:** semantic search ✅ · Ask your meetings (grounded RAG) ✅ · follow-up agent with human approval ✅
 
 ---
 
@@ -36,7 +36,7 @@ and time, participants, speaker-wise contributions, executive summary, key
 discussion points, keywords/topics, decisions, action items with owner and
 deadline, pending/unresolved items, next steps, and a source/transcript reference.
 
-Semantic search and Ask-your-meetings (RAG) are advanced layers **on top of** this core;
+Semantic search, Ask-your-meetings (RAG) and the follow-up agent are advanced layers **on top of** this core;
 they never displace it.
 
 ## Milestone progress
@@ -51,6 +51,76 @@ they never displace it.
 | **M6** | Embeddings + pgvector + semantic search | ✅ `v0.6.0` |
 | **M7** | **Core MOM workflow — notes/transcript/audio/video → structured MOM → PDF** | ✅ `v0.7.0` |
 | **M8** | Ask your meetings — RAG over transcripts + minutes, cited and grounded | ✅ `v0.8.0` |
+| **M9** | Controlled follow-up agent — detect, recall, draft, verify, human approval | ✅ `v0.9.0` |
+
+---
+
+## M9 — Controlled follow-up agent ✅ (ADR 0015)
+
+M8 gave MinuteAI a memory; M9 makes it act on that memory, under human control.
+The M7 rule-based review flags remain **validation** of a single extraction; the
+agent is a separate component working across meetings.
+
+### The loop (`POST /api/v1/agent/runs`)
+- [x] **observe**: five SQL detectors, all joined on `meetings.owner_id`:
+  - overdue action items;
+  - items due within 2 days;
+  - open items with no owner;
+  - decisions still open 14 days after the meeting;
+  - pending items from the last 60 days. A pending item that semantic search finds in another meeting's pending items (score ≥ 0.6) is reported once, as a **recurring topic**.
+- [x] **deduplicate**: stable `dedupe_key` per situation, `UNIQUE (owner_id, dedupe_key)`. Approved, pending and rejected proposals are never re-proposed; a changed deadline is a new situation.
+- [x] **prioritise**: late work first, then by urgency; budget of 10 candidates per run, the rest carried to the next run
+- [x] **recall**: `rag.retrieve_context` (extracted from M8's `ask()`, no change in behaviour), 3 passages per candidate
+- [x] **decide + draft**: **one** structured Gemini call (`AgentDrafts`, prompt `agent-v1`) for every candidate: follow up or not, priority, cited rationale, recipients, subject, message
+- [x] **verify** (code):
+  - unknown or duplicate candidate ids are ignored;
+  - recipients are limited to the owner or participants;
+  - citations must name shown passages;
+  - "resolved" is accepted only with a cited passage;
+  - an empty or over-long draft is replaced by a template.
+- [x] **propose**: `follow_up_proposals` rows; nothing is sent and no meeting data changes
+- [x] Model unavailable ⇒ labelled template drafts (`used_fallback`, `drafted_by = template`)
+- [x] Full trace stored per run (`agent_runs.steps`); one running run per user (partial unique index, 409 `agent_run_in_progress`); a run interrupted by a restart is recovered after 10 minutes
+
+### Human approval
+- [x] `approve` (optionally with edited subject/body and a note; the original draft is kept) and `reject`; each proposal can be decided once (409 `proposal_already_decided`); another user's proposal returns 404
+- [x] `dashboard.follow_ups_pending`
+
+### Web app
+- [x] **Follow-ups** page:
+  - "Run agent" button;
+  - collapsible trace of the last run;
+  - Needs approval / Approved / Rejected tabs;
+  - proposal cards with priority, kind, meeting, reason, recipients, draft and sources;
+  - Edit → "Approve with edits", and Reject;
+  - approved follow-ups open in the user's email client or copy to the clipboard.
+- [x] Sidebar entry with a badge for follow-ups waiting for approval
+
+**Tests:**
+- Backend: 313 passed, 6 skipped (live, opt-in). Frontend: 66 passed.
+- `test_agent.py` (15 tests) covers:
+  - every detector, including recurring topics and the look-back window;
+  - one model call per run, and no call when there is nothing to do;
+  - the prompt's facts, recipients and sources;
+  - every guardrail, the template fallback and a failed run;
+  - the candidate budget, and deduplication including after a rejection and after a deadline change;
+  - approve with edits, reject, decide-once and blank edits;
+  - cross-user isolation, single flight with interrupted-run recovery, and cascade and SET NULL behaviour.
+
+**11 mutations checked, all caught:**
+- recipient filter removed;
+- "resolved" accepted without evidence;
+- unknown candidate ids accepted;
+- citation range check removed;
+- deduplication removed;
+- candidate budget removed;
+- single-flight error removed;
+- proposal ownership check removed;
+- decide-once check removed;
+- detector ownership filter removed;
+- fallback on model error removed.
+
+**Found while building M9:** approve/reject returned the proposal after `commit()` with expired attributes (`MissingGreenlet`); the handlers now refresh the row before responding (caught by the tests).
 
 ---
 

@@ -48,3 +48,9 @@ export type MinutesPdf = Schemas["MomPdfResponse"];
 export type AskResponse = Schemas["AskResponse"];
 export type AskSource = Schemas["AskSource"];
 export type SearchResult = Schemas["SearchResult"];
+
+export type AgentRun = Schemas["AgentRunResponse"];
+export type Proposal = Schemas["ProposalResponse"];
+export type ProposalList = Schemas["ProposalList"];
+export type ProposalKind = Schemas["ProposalKind"];
+export type ProposalStatus = Schemas["ProposalStatus"];

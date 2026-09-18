@@ -246,6 +246,29 @@ verify_citations: drop unknown [n] · no valid citation ⇒ insufficient_context
 | action_item | `action_items` row (`source_ref`) | – | live row: task, owner, deadline, status |
 | pending / next_steps | `summaries` JSONB | – | chunk text |
 
+## 5c. Follow-up agent (M9 — ADR 0015)
+
+```
+POST /api/v1/agent/runs            one running run per user (partial unique index → 409)
+  ▼
+observe      detectors.find_candidates      SQL over own records: overdue · due soon · no owner ·
+                                            stale open decision · pending item (recurring if semantic
+                                            search finds it in another meeting, score ≥ 0.6)
+deduplicate  dedupe_key ∉ follow_up_proposals (any status)
+prioritise   kind rank, urgency; ≤ AGENT_MAX_CANDIDATES (10)
+recall       rag.retrieve_context per candidate (≤ 3 passages, same ACL + relevance gate as /ask)
+decide+draft ONE Gemini call → AgentDrafts {candidate_id, follow_up, priority, rationale [n],
+             recipients, subject, message, cited_sources}      prompt agent-v1, T = 0.2
+             LLMError ⇒ template drafts for all (used_fallback)
+verify       drafting.verify_drafts: known ids only · allowed recipients · shown citations ·
+             "resolved" needs a citation · empty/long ⇒ template
+propose      follow_up_proposals (status proposed) · steps trace saved on agent_runs
+  ▼
+person: approve (optional edits) / reject      — once; nothing is sent by MinuteAI
+```
+
+The agent reads meeting data and writes only `agent_runs` and `follow_up_proposals`.
+
 ## 6. Extraction pipeline (M2 — ADR 0007)
 
 ```
@@ -325,10 +348,12 @@ round-trip cleanly), original wording kept beside resolved values (`owner_name`,
 `deadline_text`), and cascade deletes from meetings.
 
 **Indexes worth knowing**: `(owner_id, meeting_date DESC)` for the dashboard;
-`(status, deadline)` on action items for overdue queries and the M8 agent.
+`(status, deadline)` on action items for overdue queries and the follow-up agent's detectors.
 
 **DynamoDB** — see §4 and ADR 0008 for the job table design.
 
+| `agent_runs` (M9) | owner_id (CASCADE), trigger, status, model, prompt_version, candidates_found, proposals_created, used_fallback, steps (JSONB), error_code | partial UNIQUE (owner_id) WHERE status = 'running' |
+| `follow_up_proposals` (M9) | owner_id, run_id (SET NULL), meeting_id (CASCADE), action_item_id / decision_id (SET NULL), kind, dedupe_key, priority, title, rationale, recipients, draft_subject/body, drafted_by, sources (JSONB), status, final_subject/body, decided_at, decision_note | UNIQUE (owner_id, dedupe_key); CHECKs on kind, priority, drafted_by, status |
 | `meeting_chunks` (M6, M8) | meeting_id (CASCADE), source_kind, source_ref, chunk_index, content, char_start/char_end (transcript only), token_count, transcript_sha256, embedding_model, chunker_version, embedding `vector(384)` | UNIQUE (meeting_id, source_kind, chunk_index); HNSW `vector_cosine_ops`; CHECK on source_kind |
 
 
@@ -477,5 +502,6 @@ and validated at start-up.
 | [0012](adr/0012-local-embeddings-and-semantic-search.md) | Local MiniLM via ONNX Runtime, turn-based chunks, provenance-checked index, iterative HNSW scans for filtered search |
 | [0013](adr/0013-minutes-of-meeting-and-pdf.md) | Minutes of Meeting model, deterministic review flags, ReportLab PDF stored by fingerprint, audio extracted from video |
 | [0014](adr/0014-ask-your-meetings-rag.md) | RAG over transcripts + minutes in pgvector, live-record context, relevance gate and citation verification in code |
+| [0015](adr/0015-controlled-follow-up-agent.md) | Controlled follow-up agent: SQL detectors, RAG recall, one structured model call, guardrails in code, human approval |
 
 Milestone status: [PROJECT_STATUS.md](PROJECT_STATUS.md).

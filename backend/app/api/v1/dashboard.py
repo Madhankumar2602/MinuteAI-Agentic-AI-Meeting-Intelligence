@@ -13,7 +13,15 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.core.deps import CurrentUser, DbSession
-from app.db.models import OPEN_ACTION_STATUSES, ActionItem, ActionItemStatus, Meeting, MeetingStatus
+from app.db.models import (
+    OPEN_ACTION_STATUSES,
+    ActionItem,
+    ActionItemStatus,
+    FollowUpProposal,
+    Meeting,
+    MeetingStatus,
+    ProposalStatus,
+)
 from app.schemas.intelligence import ActionItemResponse
 from app.schemas.meeting import MeetingResponse
 
@@ -39,6 +47,7 @@ class DashboardResponse(BaseModel):
     action_items: ActionItemCounts
     recent_meetings: list[MeetingResponse]
     attention: list[ActionItemResponse]
+    follow_ups_pending: int = 0  # agent proposals waiting for a decision (M9)
 
 
 @router.get(
@@ -92,7 +101,14 @@ async def get_dashboard(db: DbSession, current_user: CurrentUser) -> DashboardRe
         .limit(8)
     )
 
+    follow_ups_pending = await db.scalar(
+        select(func.count()).where(
+            FollowUpProposal.owner_id == current_user.id,
+            FollowUpProposal.status == ProposalStatus.PROPOSED,
+        )
+    )
     return DashboardResponse(
+        follow_ups_pending=follow_ups_pending or 0,
         meetings=MeetingCounts(total=sum(by_status.values()), by_status=by_status),
         action_items=ActionItemCounts(
             open=counts[0], overdue=counts[1], due_soon=counts[2], done=counts[3]

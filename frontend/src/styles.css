@@ -609,3 +609,18 @@ a.cite:hover { background: var(--primary); color: #fff; }
 .ask-composer .textarea:focus { outline: none; box-shadow: none; }
 .ask-composer:focus-within { border-color: var(--primary); }
 @media (max-width: 860px) { .ask-answer { margin-left: 0; } }
+
+/* ---- follow-up agent ------------------------------------------------------ */
+.nav-count.pending { background: var(--primary); }
+.agent-trace summary { cursor: pointer; list-style: none; }
+.agent-trace summary::-webkit-details-marker { display: none; }
+.agent-steps { margin: 0; padding: 0 22px 18px 42px; display: grid; gap: 8px; }
+.agent-steps li { display: grid; gap: 1px; }
+.agent-steps li::marker { color: var(--text-3); font-size: 12px; }
+.proposal-title { margin: 2px 0 0; font-size: 16px; font-weight: 650; color: var(--text); }
+.proposal-draft { padding: 12px 14px; border-radius: var(--radius-sm); background: var(--surface-2); display: grid; gap: 6px; }
+.proposal-draft .passage { margin: 0; }
+.proposal-edit { min-height: 160px; font-family: inherit; font-size: 14px; }
+.proposal-sources summary { cursor: pointer; }
+.proposal-sources ol { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 10px; }
+.proposal-sources .passage { margin: 2px 0; max-height: 120px; overflow: auto; }

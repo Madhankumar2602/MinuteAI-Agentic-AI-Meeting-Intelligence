@@ -1,6 +1,7 @@
 import { apiRequest } from "./client";
 import type {
   ActionItem,
+  AgentRun,
   ActionItemPage,
   ActionItemStatus,
   ActionItemUpdate,
@@ -17,6 +18,9 @@ import type {
   MeetingStatus,
   Minutes,
   MinutesPdf,
+  Proposal,
+  ProposalList,
+  ProposalStatus,
   ProcessSubmission,
   SearchResponse,
   Token,
@@ -78,6 +82,15 @@ export const api = {
   // ---- ask your meetings (M8) -----------------------------------------------
   ask: (body: { question: string; meeting_ids?: string[] }) =>
     apiRequest<AskResponse>("/ask", { method: "POST", json: body }),
+
+  // ---- follow-up agent -------------------------------------------------------
+  runAgent: () => apiRequest<AgentRun>("/agent/runs", { method: "POST" }),
+  listAgentRuns: (limit = 5) => apiRequest<AgentRun[]>(`/agent/runs${qs({ limit })}`),
+  listProposals: (status?: ProposalStatus) => apiRequest<ProposalList>(`/agent/proposals${qs({ status })}`),
+  approveProposal: (id: string, body: { subject?: string; body?: string; note?: string } = {}) =>
+    apiRequest<Proposal>(`/agent/proposals/${id}/approve`, { method: "POST", json: body }),
+  rejectProposal: (id: string, note?: string) =>
+    apiRequest<Proposal>(`/agent/proposals/${id}/reject`, { method: "POST", json: note ? { note } : {} }),
 
   // ---- semantic search (M6) ------------------------------------------------
   search: (params: { q: string; limit?: number; meeting_id?: string }) =>
